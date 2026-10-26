@@ -6,62 +6,61 @@ from src.core.state import StateManager
 from src.core.database import Database
 from src.ingestion.fomo_client import FomoClient
 from src.decision.engine import DecisionEngine
-from src.execution.telethon_client import ExecutionGateway
-from src.bot/controller import TelegramController
+from src.bot.controller import TelegramController
 
 async def health_check(request):
-    # يُستخدم لفحص جاهزية الحاوية في Railway
-    return web.Response(text="OK", status=200)
+    return web.Response(text="FOMO Cloud Engine Healthy", status=200)
 
-async def app_supervisor(state, fomo, decision, execution, tg_bot):
-    logger.info("Core Supervisor task initiated.")
+async def app_supervisor(state, fomo, decision, tg_bot):
+    logger.info("Supervisor running 24/7 on Railway...")
     while True:
         try:
-            current_trader = await state.get_active_trader()
-            
-            # إذا لم يتم تعيين تاجر بعد، اختر المتصدر تلقائياً
-            if not current_trader:
-                leaders = await fomo.fetch_leaderboard(timeframe="7d", limit=5)
-                if leaders:
-                    selected = leaders[0]
-                    await state.set_active_trader(selected)
-                    await execution.switch_target(selected.get("wallet_address") or selected.get("handle"))
-                    await tg_bot.send_alert(f"Initiated copy on #{selected.get('rank')} {selected.get('handle')}")
-            
+            leaders = await fomo.fetch_leaderboard(timeframe="7d", limit=5)
+            if leaders:
+                top_trader = leaders[0]
+                current = await state.get_active_trader()
+                
+                # إشعار أولي أو تحديث عند تغير المركز الأول
+                if not current or current.get("handle") != top_trader.get("handle"):
+                    await state.set_active_trader(top_trader)
+                    msg = (
+                        f"🎯 **تحديث المتصدرين (FOMO Leaderboard):**\n"
+                        f"التاجر الأول حالياً: `{top_trader.get('handle')}`\n"
+                        f"الربح المحقق: +${top_trader.get('realized_pnl', 0):,.2f}\n"
+                        f"نسبة الفوز: {top_trader.get('win_rate', 0)}%"
+                    )
+                    await tg_bot.send_alert(msg)
+
             await asyncio.sleep(60)
         except Exception as e:
-            logger.error(f"Supervisor iteration fault: {e}")
-            await asyncio.sleep(10)
+            logger.error(f"Supervisor error: {e}")
+            await asyncio.sleep(15)
 
 async def main():
-    logger.info("Booting FOMO Copy Engine...")
+    logger.info("Starting Railway Pure Cloud Instance...")
     
-    # تهيئة الخدمات
     state = StateManager()
     db = Database()
     await db.connect()
     
     fomo = FomoClient()
     decision = DecisionEngine(state, db)
-    execution = ExecutionGateway()
-    await execution.start()
+    tg_bot = TelegramController(state)
     
-    tg_bot = TelegramController(state, execution)
     await tg_bot.app.initialize()
     await tg_bot.app.start()
     await tg_bot.app.updater.start_polling()
 
-    # خادم HTTP للصحة على المنفذ المطلوب لـ Railway
+    # خادم فحص الصحة لمنصة Railway
     server = web.Application()
     server.router.add_get("/health", health_check)
     runner = web.AppRunner(server)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", settings.PORT)
     await site.start()
-    logger.info(f"Health server listening on port {settings.PORT}")
+    logger.info(f"Railway Healthcheck bound to port {settings.PORT}")
 
-    # تشغيل الرقيب الأساسي
-    await app_supervisor(state, fomo, decision, execution, tg_bot)
+    await app_supervisor(state, fomo, decision, tg_bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
