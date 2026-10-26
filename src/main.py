@@ -8,9 +8,11 @@ from src.ingestion.fomo_client import FomoClient
 from src.bot.controller import TelegramController
 
 async def health_check(request):
+    """نقطة فحص الجاهزية لإبقاء الحاوية نشطة على Railway"""
     return web.Response(text="FOMO Cloud Engine Healthy", status=200)
 
 async def app_supervisor(state, fomo, tg_bot):
+    """حلقة مراقبة أداء المتصدرين كل 60 ثانية"""
     logger.info("Supervisor running 24/7 on Railway...")
     while True:
         try:
@@ -19,7 +21,7 @@ async def app_supervisor(state, fomo, tg_bot):
                 top_trader = leaders[0]
                 current = await state.get_active_trader()
                 
-                # إذا ظهر تاجر متصدر جديد أو أول تشغيل
+                # إرسال إشعار عند ظهور تاجر متصدر جديد
                 if not current or current.get("handle") != top_trader.get("handle"):
                     await state.set_active_trader(top_trader)
                     msg = (
@@ -48,14 +50,14 @@ async def main():
     fomo = FomoClient()
     tg_bot = TelegramController(state)
     
-    # حذف أي Webhook قديم لتفريغ الاتصال في تيليجرام
+    # تفريغ أي جلسة ويب هوك أو طلبات معلقة لتفادي أي تعارض
     try:
-        await tg_bot.app.bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Cleared old Telegram sessions successfully.")
+        await tg_bot.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Telegram session cleared successfully.")
     except Exception as e:
-        logger.warning(f"Failed to reset Telegram sessions: {e}")
+        logger.warning(f"Failed to delete webhook: {e}")
 
-    # تشغيل خادم فحص الجاهزية (Health Check) لـ Railway
+    # تشغيل خادم الفحص الصحي لـ Railway
     server = web.Application()
     server.router.add_get("/", health_check)
     server.router.add_get("/health", health_check)
@@ -65,10 +67,10 @@ async def main():
     await site.start()
     logger.info(f"Railway Healthcheck bound to port {settings.PORT}")
 
-    # إرسال إشعار تأكيد التشغيل إلى حسابك فوراً
-    await tg_bot.send_alert("🟢 **محرك المراقبة والتنبيهات السحابي FOMO Engine يعمل الآن بنجاح على Railway!**")
+    # إرسال إشعار التشغيل الأولي إلى تيليجرام
+    await tg_bot.send_alert("🟢 **محرك المراقبة السحابي FOMO Engine يعمل الآن بنجاح على Railway!**")
 
-    # بدء حلقة المراقبة المستمرة
+    # بدء حلقة الإشراف المستمر
     await app_supervisor(state, fomo, tg_bot)
 
 if __name__ == "__main__":
