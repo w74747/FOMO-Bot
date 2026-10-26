@@ -5,7 +5,6 @@ from src.config import settings
 from src.core.state import StateManager
 from src.core.database import Database
 from src.ingestion.fomo_client import FomoClient
-from src.decision.engine import DecisionEngine
 from src.bot.controller import TelegramController
 
 async def health_check(request):
@@ -23,8 +22,8 @@ async def app_supervisor(state, fomo, tg_bot):
                 if not current or current.get("handle") != top_trader.get("handle"):
                     await state.set_active_trader(top_trader)
                     msg = (
-                        f"🎯 **تحديث المتصدرين (FOMO Leaderboard):**\n"
-                        f"التاجر الأول حالياً: `{top_trader.get('handle')}`\n"
+                        f"🎯 **تحديث المتصدرين (FOMO Leaderboard):**\n\n"
+                        f"التاجر النشط: `{top_trader.get('handle')}`\n"
                         f"الربح المحقق: +${top_trader.get('realized_pnl', 0):,.2f}\n"
                         f"نسبة الفوز: {top_trader.get('win_rate', 0)}%"
                     )
@@ -48,20 +47,18 @@ async def main():
     fomo = FomoClient()
     tg_bot = TelegramController(state)
     
-    # تهيئة البوت وتشغيله كخدمة فرعية
+    # تهيئة تطبيق التيليجرام
     await tg_bot.app.initialize()
     await tg_bot.app.start()
     
-    # تشغيل جلب التحديثات بأمان وتجاهل التضارب القديم
-    try:
-        await tg_bot.app.bot.delete_webhook(drop_pending_updates=True)
-    except Exception:
-        pass
-        
+    # حذف الويب هوك وبدء Polling وحيد في كامل التطبيق
+    await tg_bot.app.bot.delete_webhook(drop_pending_updates=True)
     await tg_bot.app.updater.start_polling(drop_pending_updates=True)
+    logger.info("Single Telegram Polling started successfully.")
 
-    # سيرفر فحص الصحة لمنصة Railway
+    # خادم فحص الجاهزية لـ Railway
     server = web.Application()
+    server.router.add_get("/", health_check)
     server.router.add_get("/health", health_check)
     runner = web.AppRunner(server)
     await runner.setup()
@@ -69,6 +66,8 @@ async def main():
     await site.start()
     logger.info(f"Railway Healthcheck bound to port {settings.PORT}")
 
+    # إرسال إشعار البدء وتشغيل حلقة المراقبة
+    await tg_bot.send_alert("🟢 **محرك المراقبة السحابي FOMO Engine جاهز ويعمل بنسخة Polling وحيدة!**")
     await app_supervisor(state, fomo, tg_bot)
 
 if __name__ == "__main__":
