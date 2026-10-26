@@ -50,9 +50,9 @@ async def main():
     fomo = FomoClient()
     tg_bot = TelegramController(state)
     
-    # تفريغ أي جلسة ويب هوك أو طلبات معلقة لتفادي أي تعارض
+    # تفريغ أي جلسة ويب هوك قديمة لتفادي التعارض مع البوت
     try:
-        await tg_bot.bot.delete_webhook(drop_pending_updates=True)
+        await tg_bot.app.bot.delete_webhook(drop_pending_updates=True)
         logger.info("Telegram session cleared successfully.")
     except Exception as e:
         logger.warning(f"Failed to delete webhook: {e}")
