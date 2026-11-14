@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     MAX_TOP10_HOLDER_PCT: float = 0.40   # Jupiter audit.topHoldersPercentage
     MIN_ORGANIC_SCORE: float = 20.0       # Jupiter organic score (filters wash trading)
     MIN_HOLDERS: int = 500
-    MAX_ANALYZE_PER_SCAN: int = 25
+    MAX_ANALYZE_PER_SCAN: int = 35
     WATCHLIST_SIZE: int = 15
     MIN_SCORE: float = 55.0
     HISTORY_HOURS: int = 720  # 30 days of hourly candles
@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     TP1_FACTOR: float = 0.60          # first target = 60% of median rise
     TP2_FACTOR: float = 0.85          # second target = 85% of median rise
     MIN_REWARD_RISK: float = 1.3
+
+    # --- Reporting ---
+    DAILY_REPORT_HOUR_UTC: int = 5   # 09:00 Muscat
 
     # --- Monitor ---
     PRICE_POLL_SEC: int = 15

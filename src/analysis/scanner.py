@@ -13,7 +13,7 @@ from src.data.http import HttpError
 from src.data.models import PoolInfo
 from src.data.jupiter import TOKEN_CATEGORIES, JupiterClient
 from src.data.safety import SafetyChecker
-from src.trading.strategy import StrategyParams, TradePlan, build_plan
+from src.trading.strategy import StrategyParams, TradePlan, build_plan, load_params
 
 EXCLUDED_MINTS = {
     "So11111111111111111111111111111111111111112",   # wSOL
@@ -195,11 +195,12 @@ class Scanner:
             a.reasons.extend(a.safety["reasons"])
             return a
         try:
-            candles = await self.gecko.ohlcv(pool.pool_address, "hour", 1, self.s.HISTORY_HOURS)
+            candles = await self.get_candles(pool)
         except HttpError as e:
             a.reasons.append(f"no candles ({e.status})")
             return a
-        a.stats = wave_stats(candles, self.s.ZIGZAG_PCT)
+        recent = candles[-self.s.HISTORY_HOURS:]
+        a.stats = wave_stats(recent, self.params.zigzag_pct)
         if a.stats is None:
             a.reasons.append("not enough candles")
             return a
@@ -211,7 +212,7 @@ class Scanner:
         )
         if a.plan is None and not a.reasons:
             a.reasons.append("reward/risk too low after costs")
-        a.bt = backtest(candles, self.s.ZIGZAG_PCT, self.params, pool.liquidity_usd, self.s.MAX_POSITION_USD)
+        a.bt = backtest(candles, self.params.zigzag_pct, self.params, pool.liquidity_usd, self.s.MAX_POSITION_USD)
         if a.bt.trades >= 3 and a.bt.total_return_pct < 0:
             a.reasons.append(f"backtest negative ({a.bt.total_return_pct:+.1f}% over {a.bt.trades} trades)")
         if a.score < self.s.MIN_SCORE and not a.reasons:
@@ -220,7 +221,60 @@ class Scanner:
             a.reasons.append(f"top holders own {a.top10:.0%}")
         return a
 
+    async def get_candles(self, pool: PoolInfo):
+        """Hourly candles: stored history from Postgres + only the missing recent hours from the API.
+        Every fetched candle is stored, including for rejected tokens (avoids survivorship bias
+        when optimising later)."""
+        addr = pool.pool_address
+        now = time.time()
+        last = await self.db.last_candle_ts(addr) if self.db.ready else None
+        if last and now - last < 900 * 3600:
+            need = int((now - last) / 3600) + 3
+            fresh = await self.gecko.ohlcv(addr, "hour", 1, need)
+            stored = await self.db.load_candles(addr, int(now - 1000 * 3600))
+            merged = {c.ts: c for c in stored}
+            merged.update({c.ts: c for c in fresh})
+            candles = [merged[k] for k in sorted(merged)]
+        else:
+            fresh = await self.gecko.ohlcv(addr, "hour", 1, 1000)
+            candles = fresh
+        await self.db.save_candles(addr, pool.mint, pool.symbol, pool.liquidity_usd, fresh)
+        return candles
+
+    async def collect(self, limit: int = 60) -> tuple[int, int]:
+        """Backfill candle history for many tokens (winners AND losers) to give the optimiser
+        a broad, less biased dataset. Returns (new_pools_stored, candles_stored)."""
+        if not (self.jupiter and self.db.ready):
+            return 0, 0
+        tokens = await self.discover_tokens()
+        seen, loose = set(), []
+        for t in tokens:
+            sym = (t["symbol"] or "").upper()
+            if t["mint"] in seen or t["mint"] in EXCLUDED_MINTS or sym in EXCLUDED_SYMBOLS or "USD" in sym:
+                continue
+            seen.add(t["mint"])
+            if t["age_days"] >= 10 and t["liquidity"] >= 20_000:
+                loose.append(t)
+        tracked = {r["mint"] for r in await self.db.tracked_pools(min_candles=1)}
+        todo = [t for t in loose if t["mint"] not in tracked][:limit]
+        pools = await self.gecko.best_pools([t["mint"] for t in todo])
+        n_pools = n_candles = 0
+        for t in todo:
+            p = pools.get(t["mint"])
+            if not p:
+                continue
+            try:
+                candles = await self.gecko.ohlcv(p.pool_address, "hour", 1, 1000)
+            except HttpError as e:
+                logger.warning(f"collect: candles failed for {t['symbol']}: {e}")
+                continue
+            await self.db.save_candles(p.pool_address, t["mint"], t["symbol"], t["liquidity"], candles)
+            n_pools += 1
+            n_candles += len(candles)
+        return n_pools, n_candles
+
     async def analyze_mint(self, mint: str) -> Analysis | None:
+        self.params = await load_params(self.state, self.s)
         token = None
         if self.jupiter:
             try:
@@ -241,6 +295,7 @@ class Scanner:
         self.running = True
         started = time.time()
         try:
+            self.params = await load_params(self.state, self.s)
             n_seen, kept, rejected = await self.candidates()
             logger.info(f"Scan: {n_seen} tokens/pools seen, {len(kept)} to analyse, rejected={rejected}")
 
@@ -297,6 +352,7 @@ class Scanner:
                 "reward_risk": pl.reward_risk,
                 "bt_trades": a.bt.trades if a.bt else 0,
                 "bt_return": a.bt.total_return_pct if a.bt else 0.0,
+                "bt_avg": a.bt.avg_return_pct if a.bt else 0.0,
                 "status": prev.get("status", "waiting") if prev.get("status") == "armed" else "waiting",
                 "local_min": prev.get("local_min") if prev.get("status") == "armed" else None,
                 "added_at": prev.get("added_at", now),

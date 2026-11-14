@@ -1,5 +1,5 @@
 """Turns a coin's wave statistics into concrete buy / target / stop levels."""
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields, replace
 
 JUPITER_FEE = 0.001     # ~5-10 bps Jupiter + rounding
 POOL_FEE = 0.0025       # typical DEX pool fee per side
@@ -7,6 +7,7 @@ POOL_FEE = 0.0025       # typical DEX pool fee per side
 
 @dataclass
 class StrategyParams:
+    zigzag_pct: float = 0.10
     entry_drop_factor: float = 0.85
     tp1_factor: float = 0.60
     tp2_factor: float = 0.85
@@ -17,11 +18,27 @@ class StrategyParams:
     @classmethod
     def from_settings(cls, s) -> "StrategyParams":
         return cls(
+            zigzag_pct=s.ZIGZAG_PCT,
             entry_drop_factor=s.ENTRY_DROP_FACTOR,
             tp1_factor=s.TP1_FACTOR,
             tp2_factor=s.TP2_FACTOR,
             min_reward_risk=s.MIN_REWARD_RISK,
         )
+
+
+PARAM_NAMES = {f.name for f in fields(StrategyParams)}
+
+
+def apply_overrides(base: StrategyParams, overrides: dict | None) -> StrategyParams:
+    if not overrides:
+        return base
+    clean = {k: float(v) for k, v in overrides.items() if k in PARAM_NAMES}
+    return replace(base, **clean)
+
+
+async def load_params(state, settings) -> StrategyParams:
+    """Settings defaults + any overrides applied from Telegram (/apply), stored in Redis."""
+    return apply_overrides(StrategyParams.from_settings(settings), await state.get_param_overrides())
 
 
 @dataclass

@@ -3,9 +3,9 @@
 At every bar the wave statistics are computed ONLY from past candles (no look-ahead),
 re-estimated every `refit_every` bars. Fills are conservative: if a bar touches both
 stop and target, the stop is assumed to hit first."""
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
-from src.analysis.waves import wave_stats, zigzag
+from src.analysis.waves import score, wave_stats, zigzag
 from src.data.models import Candle
 from src.trading.strategy import StrategyParams, build_plan, levels, side_cost
 
@@ -19,9 +19,12 @@ class BacktestResult:
     avg_return_pct: float
     worst_trade_pct: float
     test_days: float
+    returns: list[float] = field(default_factory=list)  # per-trade returns (fractions)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d.pop("returns", None)
+        return d
 
 
 def backtest(
@@ -32,7 +35,10 @@ def backtest(
     position_usd: float,
     warmup: int = 240,
     refit_every: int = 24,
+    stats_cache: dict | None = None,
 ) -> BacktestResult:
+    """`stats_cache` (optional) memoises wave stats per refit bar; it is only valid for one
+    candle series and one zigzag pct, and lets the optimiser reuse work across parameter sets."""
     empty = BacktestResult(0, 0, 0.0, 0.0, 0.0, 0.0, 0.0)
     if len(candles) < warmup + 48:
         return empty
@@ -48,8 +54,14 @@ def backtest(
     for i in range(warmup, len(candles)):
         bar = candles[i]
         if (i - warmup) % refit_every == 0 or stats is None:
-            stats = wave_stats(candles[:i], zz_pct)
-            tradeable = bool(stats) and build_plan(
+            if stats_cache is not None and i in stats_cache:
+                stats = stats_cache[i]
+            else:
+                stats = wave_stats(candles[:i], zz_pct)
+                if stats_cache is not None:
+                    stats_cache[i] = stats
+            # same gate as live: the coin must still pass the wave score filters at this point in time
+            tradeable = bool(stats) and not score(stats, liquidity_usd)[1] and build_plan(
                 stats.last_high, stats.median_drop, stats.median_rise, stats.avg_cycle_hours,
                 liquidity_usd, position_usd, params) is not None
             if stats and pos is None:
@@ -122,6 +134,7 @@ def backtest(
         avg_return_pct=round(sum(returns) / len(returns) * 100, 2),
         worst_trade_pct=round(min(returns) * 100, 2),
         test_days=round((candles[-1].ts - candles[warmup].ts) / 86400, 1),
+        returns=returns,
     )
 
 

@@ -33,6 +33,37 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_trades_time ON paper_trades (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS candles (
+    pool TEXT NOT NULL,
+    ts BIGINT NOT NULL,
+    o DOUBLE PRECISION, h DOUBLE PRECISION, l DOUBLE PRECISION, c DOUBLE PRECISION, v DOUBLE PRECISION,
+    PRIMARY KEY (pool, ts)
+);
+
+CREATE TABLE IF NOT EXISTS tracked_pools (
+    pool TEXT PRIMARY KEY,
+    mint TEXT NOT NULL,
+    symbol TEXT,
+    liquidity_usd DOUBLE PRECISION,
+    first_seen TIMESTAMPTZ DEFAULT NOW(),
+    last_seen TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS closed_positions (
+    id BIGSERIAL PRIMARY KEY,
+    mint TEXT NOT NULL,
+    symbol TEXT,
+    opened_at TIMESTAMPTZ,
+    closed_at TIMESTAMPTZ DEFAULT NOW(),
+    cost_usd DOUBLE PRECISION,
+    pnl_usd DOUBLE PRECISION,
+    return_pct DOUBLE PRECISION,
+    exit_reason TEXT,
+    expected_pct DOUBLE PRECISION,
+    mode TEXT DEFAULT 'paper'
+);
+CREATE INDEX IF NOT EXISTS idx_closed_time ON closed_positions (closed_at);
 """
 
 
@@ -85,6 +116,85 @@ class Database:
             )
         except Exception as e:
             logger.error(f"log_trade failed: {e}")
+
+    # ------------------------------------------------------------ candles
+    async def save_candles(self, pool: str, mint: str, symbol: str, liquidity: float, candles) -> None:
+        if not self.pool or not candles:
+            return
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.transaction():
+                    await conn.executemany(
+                        "INSERT INTO candles (pool, ts, o, h, l, c, v) VALUES ($1,$2,$3,$4,$5,$6,$7) "
+                        "ON CONFLICT (pool, ts) DO UPDATE SET o=EXCLUDED.o, h=EXCLUDED.h, l=EXCLUDED.l, "
+                        "c=EXCLUDED.c, v=EXCLUDED.v",
+                        [(pool, c.ts, c.o, c.h, c.l, c.c, c.v) for c in candles],
+                    )
+                    await conn.execute(
+                        "INSERT INTO tracked_pools (pool, mint, symbol, liquidity_usd) VALUES ($1,$2,$3,$4) "
+                        "ON CONFLICT (pool) DO UPDATE SET last_seen=NOW(), liquidity_usd=EXCLUDED.liquidity_usd, "
+                        "symbol=EXCLUDED.symbol",
+                        pool, mint, symbol, liquidity,
+                    )
+        except Exception as e:
+            logger.error(f"save_candles failed: {e}")
+
+    async def load_candles(self, pool: str, since_ts: int = 0):
+        from src.data.models import Candle
+        if not self.pool:
+            return []
+        rows = await self.pool.fetch(
+            "SELECT ts, o, h, l, c, v FROM candles WHERE pool=$1 AND ts >= $2 ORDER BY ts", pool, since_ts)
+        return [Candle(r["ts"], r["o"], r["h"], r["l"], r["c"], r["v"]) for r in rows]
+
+    async def last_candle_ts(self, pool: str) -> int | None:
+        if not self.pool:
+            return None
+        return await self.pool.fetchval("SELECT MAX(ts) FROM candles WHERE pool=$1", pool)
+
+    async def tracked_pools(self, min_candles: int = 300) -> list[dict]:
+        if not self.pool:
+            return []
+        rows = await self.pool.fetch(
+            "SELECT t.pool, t.mint, t.symbol, t.liquidity_usd, COUNT(c.ts) AS n "
+            "FROM tracked_pools t JOIN candles c ON c.pool = t.pool "
+            "GROUP BY t.pool, t.mint, t.symbol, t.liquidity_usd HAVING COUNT(c.ts) >= $1", min_candles)
+        return [dict(r) for r in rows]
+
+    async def candle_stats(self) -> dict:
+        if not self.pool:
+            return {}
+        row = await self.pool.fetchrow("SELECT COUNT(DISTINCT pool) AS pools, COUNT(*) AS candles FROM candles")
+        return dict(row) if row else {}
+
+    # ------------------------------------------------------------ closed positions / report
+    async def save_closed_position(self, pos: dict, exit_reason: str):
+        if not self.pool:
+            return
+        from datetime import datetime, timezone
+        try:
+            ret = pos["realized_usd"] / pos["cost_usd"] * 100 if pos.get("cost_usd") else 0.0
+            await self.pool.execute(
+                "INSERT INTO closed_positions (mint, symbol, opened_at, cost_usd, pnl_usd, return_pct, "
+                "exit_reason, expected_pct, mode) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+                pos["mint"], pos.get("symbol"),
+                datetime.fromtimestamp(pos.get("opened_at", 0), tz=timezone.utc),
+                pos.get("cost_usd"), pos["realized_usd"], ret, exit_reason,
+                pos.get("expected_pct"), pos.get("mode", "paper"),
+            )
+        except Exception as e:
+            logger.error(f"save_closed_position failed: {e}")
+
+    async def closed_positions(self, since_hours: float | None = None) -> list[dict]:
+        if not self.pool:
+            return []
+        if since_hours is None:
+            rows = await self.pool.fetch("SELECT * FROM closed_positions ORDER BY closed_at")
+        else:
+            rows = await self.pool.fetch(
+                "SELECT * FROM closed_positions WHERE closed_at >= NOW() - make_interval(secs => $1) "
+                "ORDER BY closed_at", float(since_hours * 3600))
+        return [dict(r) for r in rows]
 
     async def recent_trades(self, limit: int = 10) -> list[dict]:
         if not self.pool:

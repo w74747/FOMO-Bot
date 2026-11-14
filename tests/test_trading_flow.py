@@ -13,9 +13,13 @@ MINT = "MINT1"
 class FakeDB:
     def __init__(self):
         self.trades = []
+        self.closed = []
 
     async def log_trade(self, *a, **k):
         self.trades.append(a)
+
+    async def save_closed_position(self, pos, reason):
+        self.closed.append((pos, reason))
 
 
 class FakeJup:
@@ -72,6 +76,16 @@ async def test_full_winning_cycle(env):
     assert await state.get_daily_pnl() > 0
     assert (await state.get_watchlist())[MINT]["status"] == "waiting"
     assert len(db.trades) == 3
+    (closed_pos, reason), = db.closed
+    assert closed_pos["realized_usd"] > 0 and reason == "الهدف 2"
+
+
+async def test_param_overrides_change_entry(env):
+    state, db, jup, mon, msgs = env
+    await state.set_param_overrides({"entry_drop_factor": 1.0, "bogus": 5})
+    await step(mon, jup, 1.2)          # new high -> plan recomputed with override
+    item = (await state.get_watchlist())[MINT]
+    assert abs(item["entry"] - 1.2 * (1 - 0.25 * 1.0)) < 1e-9
 
 
 async def test_stop_loss_and_cooldown(env):

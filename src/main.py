@@ -8,6 +8,7 @@ from aiohttp import web
 from loguru import logger
 
 from src.analysis.scanner import Scanner
+from src.bot.report import build_report
 from src.bot.controller import TelegramController
 from src.config import settings
 from src.core.database import Database
@@ -37,6 +38,21 @@ async def scanner_loop(scanner: Scanner, state: StateManager):
             await asyncio.sleep(interval)
         else:
             await asyncio.sleep(interval - since)
+
+
+async def daily_report_loop(db, state, notify):
+    """Send the performance report once a day at DAILY_REPORT_HOUR_UTC."""
+    from datetime import datetime, timedelta, timezone
+    while True:
+        now = datetime.now(timezone.utc)
+        nxt = now.replace(hour=settings.DAILY_REPORT_HOUR_UTC, minute=0, second=0, microsecond=0)
+        if nxt <= now:
+            nxt += timedelta(days=1)
+        await asyncio.sleep((nxt - now).total_seconds())
+        try:
+            await notify(await build_report(db, state, settings))
+        except Exception as e:
+            logger.exception(f"daily report failed: {e}")
 
 
 async def start_health_server(monitor: Monitor) -> web.AppRunner:
@@ -93,6 +109,7 @@ async def main():
     tasks = [
         asyncio.create_task(scanner_loop(scanner, state), name="scanner"),
         asyncio.create_task(monitor.run(), name="monitor"),
+        asyncio.create_task(daily_report_loop(db, state, tg.send), name="daily-report"),
     ]
     await stop.wait()
     logger.info("Shutting down…")

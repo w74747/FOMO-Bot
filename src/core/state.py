@@ -91,6 +91,17 @@ class StateManager:
     async def in_cooldown(self, mint: str) -> bool:
         return bool(await self.r.exists(P + f"cooldown:{mint}"))
 
+    # ---------- strategy parameter overrides ----------
+    async def get_param_overrides(self) -> dict:
+        raw = await self.r.get(P + "params")
+        return json.loads(raw) if raw else {}
+
+    async def set_param_overrides(self, params: dict | None):
+        if params:
+            await self.r.set(P + "params", json.dumps(params))
+        else:
+            await self.r.delete(P + "params")
+
     # ---------- caches / meta ----------
     async def cache_get(self, key: str) -> dict | None:
         raw = await self.r.get(P + "cache:" + key)

@@ -38,7 +38,7 @@ class PaperBroker:
         self.db = db
         self.s = settings
 
-    async def buy(self, item: dict, price: float, liquidity: float | None) -> dict:
+    async def buy(self, item: dict, price: float, liquidity: float | None, params=None) -> dict:
         reason = await check_risk(self.state, self.s, item["mint"])
         if reason:
             raise RiskBlocked(reason)
@@ -64,13 +64,14 @@ class PaperBroker:
             "entry_price": fill,
             "cost_usd": size,
             "stop": fill * (1 - stop_pct),
-            "tp1": fill * (1 + rise * self.s.TP1_FACTOR),
-            "tp2": fill * (1 + rise * self.s.TP2_FACTOR),
+            "tp1": fill * (1 + rise * (params.tp1_factor if params else self.s.TP1_FACTOR)),
+            "tp2": fill * (1 + rise * (params.tp2_factor if params else self.s.TP2_FACTOR)),
             "tp1_hit": False,
             "opened_at": int(time.time()),
             "time_stop_at": int(time.time() + item.get("time_stop_hours", 24) * 3600),
             "liquidity_at_entry": liq,
             "realized_usd": 0.0,
+            "expected_pct": item.get("bt_avg"),
             "mode": self.mode,
         }
         await self.state.add_balance(-size)
@@ -108,3 +109,6 @@ class PaperBroker:
         await self.db.log_trade(mint, pos["symbol"], "SELL", qty, fill, proceeds, pnl, reason, self.mode)
         logger.info(f"[paper] SELL {pos['symbol']} {qty:.4g} @ {fill:.10g} pnl={pnl:+.2f}$ ({reason})")
         return pos, pnl, closed
+
+    async def record_close(self, pos: dict, reason: str):
+        await self.db.save_closed_position(pos, reason)

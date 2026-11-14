@@ -9,7 +9,7 @@ from typing import Awaitable, Callable
 from loguru import logger
 
 from src.trading.broker import RiskBlocked
-from src.trading.strategy import StrategyParams, levels
+from src.trading.strategy import StrategyParams, levels, load_params
 
 
 def fmt_price(p: float) -> str:
@@ -37,6 +37,7 @@ class Monitor:
             await asyncio.sleep(self.s.PRICE_POLL_SEC)
 
     async def tick(self):
+        self.params = await load_params(self.state, self.s)
         watch = await self.state.get_watchlist()
         positions = await self.state.get_positions()
         mints = list(set(watch) | set(positions))
@@ -108,7 +109,7 @@ class Monitor:
     async def _enter(self, item: dict, price: float, liq: float | None):
         sym = escape(item.get("symbol", "?"))
         try:
-            pos = await self.broker.buy(item, price, liq)
+            pos = await self.broker.buy(item, price, liq, self.params)
         except RiskBlocked as e:
             item.update(status="waiting", local_min=None)
             await self.state.set_watch_item(item["mint"], item)
@@ -151,6 +152,8 @@ class Monitor:
 
     async def _exit(self, mint, fraction, price, reason, liq, item, cooldown=False):
         pos, pnl, closed = await self.broker.sell(mint, fraction, price, reason, liq)
+        if closed:
+            await self.broker.record_close(pos, reason)
         sym = escape(pos.get("symbol", "?"))
         icon = "✅" if pnl >= 0 else "🔻"
         msg = f"{icon} <b>بيع {sym}</b> ({escape(reason)}) عند {fmt_price(price)} · ربح/خسارة: {pnl:+.2f}$"

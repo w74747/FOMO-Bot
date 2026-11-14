@@ -1,6 +1,9 @@
 """Telegram control panel. Only ALLOWED_ADMIN_CHAT_ID can use it."""
 import asyncio
+import json
 import time
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import asdict
 from html import escape
 
 from loguru import logger
@@ -8,7 +11,10 @@ from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Upd
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, filters
 
+from src.analysis.optimizer import optimize
+from src.bot.report import build_report
 from src.trading.monitor import fmt_price
+from src.trading.strategy import PARAM_NAMES, load_params
 
 MAX_LEN = 4000
 
@@ -19,6 +25,12 @@ COMMANDS = [
     ("history", "آخر الصفقات"),
     ("scan", "تشغيل مسح جديد الآن"),
     ("token", "تحليل عملة: /token <mint>"),
+    ("report", "تقرير الأداء والتقدم نحو التداول الحقيقي"),
+    ("collect", "جمع بيانات تاريخية لعملات إضافية"),
+    ("optimize", "اختبار مئات الإعدادات على البيانات المخزنة"),
+    ("apply", "تطبيق إعداد من نتائج /optimize: /apply 1"),
+    ("params", "الإعدادات الحالية للاستراتيجية"),
+    ("resetparams", "العودة للإعدادات الافتراضية"),
     ("pause", "إيقاف فتح صفقات جديدة"),
     ("resume", "استئناف فتح الصفقات"),
     ("closeall", "إغلاق كل المراكز"),
@@ -34,6 +46,7 @@ class TelegramController:
         # set later by main.py
         self.state = self.db = self.scanner = self.monitor = None
         self._bg: set[asyncio.Task] = set()
+        self._busy: set[str] = set()
         self._register()
 
     def bind(self, state, db, scanner, monitor):
@@ -75,7 +88,9 @@ class TelegramController:
             "start": self.cmd_start, "help": self.cmd_start, "status": self.cmd_status,
             "watchlist": self.cmd_watchlist, "positions": self.cmd_positions, "history": self.cmd_history,
             "scan": self.cmd_scan, "token": self.cmd_token, "pause": self.cmd_pause,
-            "resume": self.cmd_resume, "closeall": self.cmd_closeall,
+            "resume": self.cmd_resume, "closeall": self.cmd_closeall, "report": self.cmd_report,
+            "collect": self.cmd_collect, "optimize": self.cmd_optimize, "apply": self.cmd_apply,
+            "params": self.cmd_params, "resetparams": self.cmd_resetparams,
         }
         for name, fn in table.items():
             self.app.add_handler(CommandHandler(name, fn, filters=admin))
@@ -242,3 +257,127 @@ class TelegramController:
     async def cmd_closeall(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         n = await self.monitor.close_all()
         await self._reply(update, f"تم إغلاق {n} مركز." if n else "لا توجد مراكز مفتوحة.")
+
+    # ------------------------------------------------------------ research commands
+    async def cmd_report(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self._reply(update, await build_report(self.db, self.state, self.s))
+
+    def _guard(self, name: str) -> bool:
+        if name in self._busy:
+            return False
+        self._busy.add(name)
+        return True
+
+    async def cmd_collect(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.db.ready:
+            await self._reply(update, "قاعدة البيانات غير متصلة.")
+            return
+        if not self._guard("collect"):
+            await self._reply(update, "⏳ عملية جمع البيانات تعمل بالفعل.")
+            return
+        n = int(context.args[0]) if context.args and context.args[0].isdigit() else 60
+        await self._reply(update, f"🗄 بدأ جمع البيانات التاريخية لحتى {n} عملة (رابحة وخاسرة)… قد يستغرق دقائق.")
+
+        async def job():
+            try:
+                pools, candles = await self.scanner.collect(n)
+                stats = await self.db.candle_stats()
+                await self.send(f"🗄 تم: {pools} عملة جديدة، {candles:,} شمعة. "
+                                f"الإجمالي المخزن: {stats.get('pools', 0)} عملة. الآن يمكنك تشغيل /optimize")
+            except Exception as e:
+                await self.send(f"❌ فشل جمع البيانات: {escape(str(e))}")
+            finally:
+                self._busy.discard("collect")
+        self._spawn(job())
+
+    async def cmd_optimize(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.db.ready:
+            await self._reply(update, "قاعدة البيانات غير متصلة.")
+            return
+        if not self._guard("optimize"):
+            await self._reply(update, "⏳ التحسين يعمل بالفعل.")
+            return
+        await self._reply(update, "🧪 بدأ اختبار الإعدادات على كل البيانات المخزنة… ستصلك النتيجة هنا.")
+        self._spawn(self._optimize_job())
+
+    async def _optimize_job(self):
+        try:
+            pools = await self.db.tracked_pools(min_candles=400)
+            if len(pools) < 10:
+                await self.send(f"البيانات غير كافية: {len(pools)} عملة فقط لديها 400+ شمعة. "
+                                "شغّل /collect أولاً (أو انتظر عدة مسحات).")
+                return
+            datasets = []
+            for p in pools:
+                candles = await self.db.load_candles(p["pool"])
+                datasets.append((p["pool"], [tuple(c) for c in candles], float(p["liquidity_usd"] or 100_000)))
+            params = await load_params(self.state, self.s)
+            started = time.time()
+            loop = asyncio.get_running_loop()
+            with ProcessPoolExecutor(max_workers=1) as ex:
+                result = await loop.run_in_executor(ex, optimize, datasets, asdict(params), self.s.MAX_POSITION_USD)
+            await self.state.set_meta("last_opt", json.dumps(result))
+            await self.send(self._format_opt(result, time.time() - started))
+        except Exception as e:
+            logger.exception("optimize failed")
+            await self.send(f"❌ فشل التحسين: {escape(str(e))}")
+        finally:
+            self._busy.discard("optimize")
+
+    @staticmethod
+    def _fmt_set(st: dict) -> str:
+        if not st["trades"]:
+            return "لا صفقات"
+        return (f"{st['trades']} صفقة/{st['tokens_traded']} عملة · فوز {st['win_rate']:.0%} · "
+                f"متوسط {st['avg_pct']:+.2f}% · أسوأ {st['worst_pct']:+.1f}%")
+
+    def _format_opt(self, r: dict, secs: float) -> str:
+        short = {"zigzag_pct": "zz", "entry_drop_factor": "دخول", "tp1_factor": "هدف1",
+                 "tp2_factor": "هدف2", "stop_drop_factor": "وقف"}
+        lines = [
+            f"🧪 <b>نتيجة التحسين</b> ({secs:.0f} ث) — {r['configs_tested']} إعداد × {r['tokens']} عملة "
+            f"(مجموعة A للاختيار: {r['tokens_a']}، مجموعة B للتحقق: {r['tokens_b']})",
+            "",
+            "<b>الإعدادات الحالية</b>",
+            f"A: {self._fmt_set(r['current']['a'])}",
+            f"B: {self._fmt_set(r['current']['b'])}",
+        ]
+        for i, c in enumerate(r["top"], 1):
+            ps = " ".join(f"{short[k]}={c['params'][k]}" for k in short)
+            lines += ["", f"<b>#{i}</b> {escape(ps)}", f"A: {self._fmt_set(c['a'])}", f"B: {self._fmt_set(c['b'])}"]
+        lines.append("")
+        if not r["top"]:
+            lines.append("لا يوجد إعداد بعدد صفقات كافٍ. اجمع بيانات أكثر بـ /collect.")
+        elif r["recommend"]:
+            lines.append("✅ الإعداد #1 ربح أيضاً على المجموعة B التي لم يُختر عليها. يمكنك تطبيقه بـ <code>/apply 1</code>")
+        else:
+            lines.append("⚠️ لا أنصح بالتطبيق: أفضل إعداد لم يثبت ربحيته على المجموعة B (خطر الإفراط في التخصيص).")
+        return "\n".join(lines)
+
+    async def cmd_apply(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        raw = await self.state.get_meta("last_opt")
+        if not raw:
+            await self._reply(update, "لا توجد نتائج تحسين. شغّل /optimize أولاً.")
+            return
+        r = json.loads(raw)
+        try:
+            idx = int(context.args[0]) if context.args else 1
+            chosen = r["top"][idx - 1]["params"]
+        except (ValueError, IndexError):
+            await self._reply(update, f"اختر رقماً بين 1 و{len(r['top'])}.")
+            return
+        await self.state.set_param_overrides({k: v for k, v in chosen.items() if k in PARAM_NAMES})
+        await self._reply(update, f"✅ طُبّق الإعداد #{idx}. سيستخدمه مراقب الأسعار فوراً والمسح القادم. "
+                                  "للتراجع: /resetparams")
+
+    async def cmd_params(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        p = await load_params(self.state, self.s)
+        ov = await self.state.get_param_overrides()
+        lines = ["⚙️ <b>إعدادات الاستراتيجية</b>"]
+        for k, v in asdict(p).items():
+            lines.append(f"{k} = {v}{' (مخصّص)' if k in ov else ''}")
+        await self._reply(update, "\n".join(lines))
+
+    async def cmd_resetparams(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.state.set_param_overrides(None)
+        await self._reply(update, "↩️ عادت الإعدادات إلى القيم الافتراضية.")
