@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, field
 
 from src.analysis.waves import score, wave_stats, zigzag
 from src.data.models import Candle
-from src.trading.strategy import StrategyParams, build_plan, levels, side_cost
+from src.trading.strategy import StrategyParams, build_plan, levels, side_cost, trail_pct, trailing_stop
 
 
 @dataclass
@@ -92,12 +92,14 @@ def backtest(
                     "tp2": lv["tp2"] * scale,
                     "half": False,
                     "realized": 0.0,
+                    "peak": fill,
+                    "trail": trail_pct(stats.median_drop, params),
                     "opened": i,
                     "time_stop": max(6, int(1.5 * stats.avg_cycle_hours)) if stats.avg_cycle_hours else 24,
                 }
             continue
 
-        # manage open position
+        # manage open position (stop is checked BEFORE using this bar's high: conservative)
         e = pos["entry"]
         closed = False
         if bar.l <= pos["stop"]:
@@ -105,18 +107,18 @@ def backtest(
             part = 0.5 if pos["half"] else 1.0
             pos["realized"] += part * ((px - e) / e - 2 * cost_side)
             closed = True
-        else:
-            if not pos["half"] and bar.h >= pos["tp1"]:
+        elif not pos["half"]:
+            if bar.h >= pos["tp1"]:
                 pos["realized"] += 0.5 * ((pos["tp1"] - e) / e - 2 * cost_side)
                 pos["half"] = True
-                pos["stop"] = max(pos["stop"], e)  # breakeven on the rest
-            if pos["half"] and bar.h >= pos["tp2"]:
-                pos["realized"] += 0.5 * ((pos["tp2"] - e) / e - 2 * cost_side)
-                closed = True
+                pos["peak"] = pos["tp1"]
+                pos["stop"] = trailing_stop(max(pos["stop"], e), e, pos["peak"], pos["tp2"], pos["trail"])
             elif i - pos["opened"] >= pos["time_stop"]:
-                part = 0.5 if pos["half"] else 1.0
-                pos["realized"] += part * ((bar.c - e) / e - 2 * cost_side)
+                pos["realized"] += (bar.c - e) / e - 2 * cost_side
                 closed = True
+        else:
+            pos["peak"] = max(pos["peak"], bar.h)
+            pos["stop"] = trailing_stop(pos["stop"], e, pos["peak"], pos["tp2"], pos["trail"])
         if closed:
             returns.append(pos["realized"])
             pos = None

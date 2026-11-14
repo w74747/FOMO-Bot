@@ -186,8 +186,10 @@ class TelegramController:
             now_txt = f" الآن {fmt_price(cur)} ({unreal:+.1%})" if cur else ""
             lines.append(
                 f"• <b>{escape(p['symbol'])}</b> {p['cost_usd']:.2f}$ دخول {fmt_price(p['entry_price'])}{now_txt}\n"
-                f"   هدف1 {fmt_price(p['tp1'])}{' ✅' if p['tp1_hit'] else ''} · هدف2 {fmt_price(p['tp2'])} · "
-                          f"وقف {fmt_price(p['stop'])} · متبقٍ {hours_left:.0f} س · محقق {p['realized_usd']:+.2f}$")
+                f"   هدف1 {fmt_price(p['tp1'])}{' ✅' if p['tp1_hit'] else ''} · "
+                f"{'وقف متحرك' if p['tp1_hit'] else 'وقف'} {fmt_price(p['stop'])} · "
+                f"أعلى سعر {fmt_price(p.get('peak', p['entry_price']))} · "
+                f"{'' if p['tp1_hit'] else f'متبقٍ {hours_left:.0f} س · '}محقق {p['realized_usd']:+.2f}$")
         await self._reply(update, "\n".join(lines))
 
     async def cmd_history(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -333,7 +335,7 @@ class TelegramController:
 
     def _format_opt(self, r: dict, secs: float) -> str:
         short = {"zigzag_pct": "zz", "entry_drop_factor": "دخول", "tp1_factor": "هدف1",
-                 "tp2_factor": "هدف2", "stop_drop_factor": "وقف"}
+                 "tp2_factor": "تشديد", "stop_drop_factor": "وقف", "trail_factor": "تتبع"}
         lines = [
             f"🧪 <b>نتيجة التحسين</b> ({secs:.0f} ث) — {r['configs_tested']} إعداد × {r['tokens']} عملة "
             f"(مجموعة A للاختيار: {r['tokens_a']}، مجموعة B للتحقق: {r['tokens_b']})",

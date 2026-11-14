@@ -66,10 +66,15 @@ async def test_full_winning_cycle(env):
     await step(mon, jup, 0.78)                     # +2.6% bounce -> buy
     pos = await state.get_position(MINT)
     assert pos and pos["cost_usd"] == settings.MAX_POSITION_USD
-    await step(mon, jup, pos["tp1"] * 1.001)       # half out, stop to breakeven
+    await step(mon, jup, pos["tp1"] * 1.001)       # half out, trailing stop >= breakeven
     pos = await state.get_position(MINT)
     assert pos["tp1_hit"] and pos["stop"] >= pos["entry_price"]
-    await step(mon, jup, pos["tp2"] * 1.001)       # rest out
+    run_up = pos["tp2"] * 1.30                      # rally far beyond the old fixed target 2
+    await step(mon, jup, run_up)
+    pos = await state.get_position(MINT)
+    assert pos is not None, "must NOT sell at target 2 any more"
+    assert pos["stop"] >= run_up * (1 - pos["trail_pct"] / 2) - 1e-12   # tightened above TP2
+    await step(mon, jup, run_up * 0.9)              # pull-back hits the trailing stop
     assert await state.get_position(MINT) is None
     end = await state.get_balance(0)
     assert end > start
@@ -77,7 +82,22 @@ async def test_full_winning_cycle(env):
     assert (await state.get_watchlist())[MINT]["status"] == "waiting"
     assert len(db.trades) == 3
     (closed_pos, reason), = db.closed
-    assert closed_pos["realized_usd"] > 0 and reason == "الهدف 2"
+    assert closed_pos["realized_usd"] > 0 and reason == "وقف متحرك"
+
+
+async def test_weak_bounce_after_tp1_keeps_profit(env):
+    state, db, jup, mon, msgs = env
+    await step(mon, jup, 0.78)
+    await step(mon, jup, 0.80)                     # buy
+    pos = await state.get_position(MINT)
+    await step(mon, jup, pos["tp1"] * 1.06)        # tp1 + a little more, below target 2
+    pos = await state.get_position(MINT)
+    stop = pos["stop"]
+    assert stop > pos["entry_price"]               # profit locked, not just breakeven
+    await step(mon, jup, stop * 0.999)
+    assert await state.get_position(MINT) is None
+    (closed_pos, reason), = db.closed
+    assert closed_pos["realized_usd"] > 0 and reason == "وقف متحرك"
 
 
 async def test_param_overrides_change_entry(env):

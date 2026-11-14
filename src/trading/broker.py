@@ -7,7 +7,7 @@ import time
 
 from loguru import logger
 
-from src.trading.strategy import side_cost
+from src.trading.strategy import StrategyParams, side_cost, trail_pct
 
 
 class RiskBlocked(Exception):
@@ -67,6 +67,8 @@ class PaperBroker:
             "tp1": fill * (1 + rise * (params.tp1_factor if params else self.s.TP1_FACTOR)),
             "tp2": fill * (1 + rise * (params.tp2_factor if params else self.s.TP2_FACTOR)),
             "tp1_hit": False,
+            "peak": fill,
+            "trail_pct": trail_pct(item.get("median_drop", 0.2), params or StrategyParams()),
             "opened_at": int(time.time()),
             "time_stop_at": int(time.time() + item.get("time_stop_hours", 24) * 3600),
             "liquidity_at_entry": liq,

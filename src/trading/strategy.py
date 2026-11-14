@@ -14,6 +14,8 @@ class StrategyParams:
     min_reward_risk: float = 1.3
     min_stop_pct: float = 0.07
     stop_drop_factor: float = 0.45
+    trail_factor: float = 0.40     # trailing distance = 40% of the coin's median drop
+    min_trail_pct: float = 0.05
 
     @classmethod
     def from_settings(cls, s) -> "StrategyParams":
@@ -27,6 +29,19 @@ class StrategyParams:
 
 
 PARAM_NAMES = {f.name for f in fields(StrategyParams)}
+
+
+def trail_pct(median_drop: float, p: StrategyParams) -> float:
+    """Distance of the trailing stop below the highest price since entry."""
+    return max(p.min_trail_pct, median_drop * p.trail_factor)
+
+
+def trailing_stop(stop: float, entry: float, peak: float, tp2: float, trail: float) -> float:
+    """Ratchet the stop up (never down) once the first target was taken.
+    Below TP2 the stop trails at `trail`; above TP2 it tightens to half of that to lock in
+    an extended move. It never goes below the entry price (the rest is risk-free)."""
+    dist = trail if peak < tp2 else trail * 0.5
+    return max(stop, entry, peak * (1 - dist))
 
 
 def apply_overrides(base: StrategyParams, overrides: dict | None) -> StrategyParams:

@@ -9,7 +9,7 @@ from typing import Awaitable, Callable
 from loguru import logger
 
 from src.trading.broker import RiskBlocked
-from src.trading.strategy import StrategyParams, levels, load_params
+from src.trading.strategy import StrategyParams, levels, load_params, trailing_stop
 
 
 def fmt_price(p: float) -> str:
@@ -121,34 +121,61 @@ class Monitor:
         await self.notify(
             f"🟢 <b>شراء {sym}</b> ({mode})\n"
             f"المبلغ: {pos['cost_usd']:.2f}$ · السعر: {fmt_price(pos['entry_price'])}\n"
-            f"الهدف 1: {fmt_price(pos['tp1'])} · الهدف 2: {fmt_price(pos['tp2'])}\n"
+            f"الهدف 1 (بيع النصف): {fmt_price(pos['tp1'])} · بعده وقف متحرك {pos.get('trail_pct', 0.08):.0%} "
+            f"يُشدَّد إلى النصف فوق {fmt_price(pos['tp2'])}\n"
             f"الوقف: {fmt_price(pos['stop'])} · وقف زمني بعد {item.get('time_stop_hours', 24):.0f} ساعة")
 
     # ------------------------------------------------------------ exits
     async def _manage(self, pos: dict, info: dict, item: dict | None):
+        """Before target 1: fixed stop + time stop. At target 1: sell half, stop to breakeven.
+        After that the rest rides with a trailing stop (no fixed second target), so a weak
+        bounce still locks in profit and a strong one is not cut short."""
         price, liq = info["price"], info.get("liquidity")
         mint = pos["mint"]
         now = time.time()
+        dirty = False
 
         if liq and pos.get("liquidity_at_entry") and liq < pos["liquidity_at_entry"] * (1 - self.s.LIQUIDITY_DROP_EXIT_PCT):
             await self._exit(mint, 1.0, price, "سحب سيولة", liq, item, cooldown=True)
             return
+
+        if price > pos.get("peak", 0):
+            pos["peak"] = price
+            dirty = True
+        if pos["tp1_hit"]:
+            new_stop = trailing_stop(pos["stop"], pos["entry_price"], pos["peak"], pos["tp2"],
+                                     pos.get("trail_pct", 0.08))
+            if new_stop > pos["stop"]:
+                pos["stop"] = new_stop
+                dirty = True
+
         if price <= pos["stop"]:
-            reason = "وقف خسارة" if not pos["tp1_hit"] else "وقف عند نقطة الدخول"
-            await self._exit(mint, 1.0, price, reason, liq, item, cooldown=not pos["tp1_hit"])
+            if not pos["tp1_hit"]:
+                reason, cooldown = "وقف خسارة", True
+            elif pos["stop"] > pos["entry_price"] * 1.001:
+                reason, cooldown = "وقف متحرك", False
+            else:
+                reason, cooldown = "وقف عند نقطة الدخول", False
+            await self._exit(mint, 1.0, price, reason, liq, item, cooldown=cooldown)
             return
         if not pos["tp1_hit"] and price >= pos["tp1"]:
+            await self.state.save_position(mint, pos)
             p, _, closed = await self._exit(mint, 0.5, price, "الهدف 1", liq, item)
             if not closed:
                 p["tp1_hit"] = True
-                p["stop"] = max(p["stop"], p["entry_price"])  # protect the rest at breakeven
+                p["peak"] = max(p.get("peak", price), price)
+                p["stop"] = trailing_stop(max(p["stop"], p["entry_price"]), p["entry_price"], p["peak"],
+                                          p["tp2"], p.get("trail_pct", 0.08))
                 await self.state.save_position(mint, p)
+                await self.notify(
+                    f"🔒 <b>{escape(p.get('symbol', '?'))}</b>: الباقي يتبع السعر بوقف متحرك "
+                    f"{p.get('trail_pct', 0.08):.0%} تحت أعلى سعر (لا يقل عن سعر الدخول). الوقف الآن {fmt_price(p['stop'])}")
             return
-        if pos["tp1_hit"] and price >= pos["tp2"]:
-            await self._exit(mint, 1.0, price, "الهدف 2", liq, item)
-            return
-        if now >= pos["time_stop_at"]:
+        if not pos["tp1_hit"] and now >= pos["time_stop_at"]:
             await self._exit(mint, 1.0, price, "وقف زمني", liq, item)
+            return
+        if dirty:
+            await self.state.save_position(mint, pos)
 
     async def _exit(self, mint, fraction, price, reason, liq, item, cooldown=False):
         pos, pnl, closed = await self.broker.sell(mint, fraction, price, reason, liq)
