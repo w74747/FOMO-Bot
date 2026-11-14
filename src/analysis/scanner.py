@@ -213,7 +213,9 @@ class Scanner:
         if a.plan is None and not a.reasons:
             a.reasons.append("reward/risk too low after costs")
         a.bt = backtest(candles, self.params.zigzag_pct, self.params, pool.liquidity_usd, self.s.MAX_POSITION_USD)
-        if a.bt.trades >= 3 and a.bt.total_return_pct < 0:
+        if a.bt.trades < self.s.MIN_BT_TRADES:
+            a.reasons.append(f"not enough backtest evidence ({a.bt.trades} trades)")
+        elif a.bt.total_return_pct < 0:
             a.reasons.append(f"backtest negative ({a.bt.total_return_pct:+.1f}% over {a.bt.trades} trades)")
         if a.score < self.s.MIN_SCORE and not a.reasons:
             a.reasons.append(f"score {a.score:.0f} < {self.s.MIN_SCORE:.0f}")
@@ -332,6 +334,8 @@ class Scanner:
         now = int(time.time())
         for a in accepted:
             p, st, pl = a.pool, a.stats, a.plan
+            if await self.state.in_cooldown(p.mint) and p.mint not in positions:
+                continue  # recently stopped out or liquidity collapsed
             prev = old.get(p.mint, {})
             new[p.mint] = {
                 "mint": p.mint,

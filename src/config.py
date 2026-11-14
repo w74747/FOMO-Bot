@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     MAX_SLIPPAGE_BPS: int = 300
     PAPER_START_BALANCE_USD: float = 1000.0
     STOP_COOLDOWN_HOURS: float = 12.0
+    LIQUIDITY_BAN_HOURS: float = 72.0   # coins whose liquidity collapsed are ignored this long
+    MIN_BT_TRADES: int = 3              # no watchlist entry without back-test evidence
 
     # --- Scanner (which coins qualify) ---
     SCAN_INTERVAL_MIN: int = 240

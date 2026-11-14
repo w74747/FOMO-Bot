@@ -83,3 +83,50 @@ async def test_scanner_merges_stored_and_fresh_candles():
     assert G.limit <= 6                      # only the missing hours were requested
     assert len(out) == 501 and out[-1].c == 9.0
     assert DB.saved == fresh
+
+
+async def test_scanner_requires_backtest_evidence_and_skips_banned():
+    import fakeredis.aioredis as fr
+    from src.analysis.scanner import Scanner
+    from src.data.models import PoolInfo
+
+    flat_waves = wave_candles(hours=300, period=40)   # short history -> few/no back-test trades
+
+    class G:
+        async def best_pools(self, mints):
+            return {m: PoolInfo("P" + m, m, m, m, "SOL", "d", 1, 3e5, 1, 1, 30, 1, 0) for m in mints}
+
+        async def ohlcv(self, pool, *a):
+            return wave_candles() if pool == "PGOOD" else flat_waves
+
+    class S:
+        async def mint_check(self, m):
+            return {"ok": True, "reasons": []}
+
+    class DB:
+        ready = False
+
+        async def save_analysis(self, *a):
+            pass
+
+        async def save_candles(self, *a):
+            pass
+
+    base = {"name": "", "price": 1, "liquidity": 3e5, "fdv": 2e6, "age_days": 40, "volume_24h": 5e5,
+            "holders": 3000, "organic_score": 50, "top_holders_pct": 0.2, "mint_disabled": True,
+            "freeze_disabled": True, "is_sus": False}
+
+    class J:
+        async def top_tokens(self, *a):
+            return [{**base, "mint": m, "symbol": m} for m in ("GOOD", "NOEVID", "BANNED")]
+
+    async def ohlcv_for(pool, *a):
+        return wave_candles() if pool in ("PGOOD", "PBANNED") else flat_waves
+    g = G()
+    g.ohlcv = ohlcv_for
+    state = StateManager(client=fr.FakeRedis(decode_responses=True))
+    await state.set_cooldown("BANNED", 72)
+    sc = Scanner(g, S(), state, DB(), settings, jupiter=J())
+    res = {a.pool.mint: a for a in await sc.run()}
+    assert any("evidence" in r for r in res["NOEVID"].reasons)
+    assert set(await state.get_watchlist()) == {"GOOD"}

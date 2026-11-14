@@ -64,9 +64,14 @@ class Monitor:
         mint = item["mint"]
         changed = False
 
+        if await self.state.in_cooldown(mint):
+            await self.state.remove_watch_item(mint)
+            return
+
         if liq and item.get("liquidity") and liq < item["liquidity"] * (1 - self.s.LIQUIDITY_DROP_EXIT_PCT):
             await self.state.remove_watch_item(mint)
-            await self.notify(f"⚠️ <b>{sym}</b>: السيولة انخفضت بشدة ({item['liquidity']:,.0f}$ ← {liq:,.0f}$). أُزيلت من المراقبة.")
+            await self.state.set_cooldown(mint, self.s.LIQUIDITY_BAN_HOURS)
+            await self.notify(f"⚠️ <b>{sym}</b>: السيولة انخفضت بشدة ({item['liquidity']:,.0f}$ ← {liq:,.0f}$). أُزيلت ومُنعت لمدة {self.s.LIQUIDITY_BAN_HOURS:.0f} ساعة.")
             return
 
         # new high -> move the whole plan up
@@ -137,6 +142,8 @@ class Monitor:
 
         if liq and pos.get("liquidity_at_entry") and liq < pos["liquidity_at_entry"] * (1 - self.s.LIQUIDITY_DROP_EXIT_PCT):
             await self._exit(mint, 1.0, price, "سحب سيولة", liq, item, cooldown=True)
+            await self.state.set_cooldown(mint, self.s.LIQUIDITY_BAN_HOURS)
+            await self.state.remove_watch_item(mint)
             return
 
         if price > pos.get("peak", 0):
@@ -188,7 +195,8 @@ class Monitor:
             msg += f"\nأُغلق المركز. الإجمالي: {pos['realized_usd']:+.2f}$"
             if cooldown:
                 await self.state.set_cooldown(mint, self.s.STOP_COOLDOWN_HOURS)
-            if item:
+                await self.state.remove_watch_item(mint)
+            elif item:
                 # start a fresh cycle from the current price
                 lv = levels(price, item["median_drop"], item["median_rise"], self.params)
                 item.update(ref_high=price, entry=lv["entry"], stop=lv["stop"], tp1=lv["tp1"], tp2=lv["tp2"],

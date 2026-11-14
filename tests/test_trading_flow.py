@@ -141,3 +141,26 @@ async def test_new_high_moves_plan_up(env):
     await step(mon, jup, 1.2)
     item = (await state.get_watchlist())[MINT]
     assert item["ref_high"] == 1.2 and abs(item["entry"] - 1.2 * (1 - 0.25 * 0.85)) < 1e-9
+
+
+async def test_liquidity_collapse_bans_coin(env):
+    state, db, jup, mon, msgs = env
+
+    async def thin(mints):
+        return {m: {"price": 0.95, "liquidity": 200_000} for m in mints}   # was 500k
+    jup.prices = thin
+    await mon.tick()
+    assert MINT not in await state.get_watchlist()
+    assert await state.in_cooldown(MINT)
+    await state.set_watch_item(MINT, watch_item())    # e.g. re-added by a scan
+    await mon.tick()
+    assert MINT not in await state.get_watchlist()    # banned coins are dropped again
+
+
+async def test_stop_loss_removes_from_watchlist(env):
+    state, db, jup, mon, msgs = env
+    await step(mon, jup, 0.78)
+    await step(mon, jup, 0.80)
+    pos = await state.get_position(MINT)
+    await step(mon, jup, pos["stop"] * 0.99)
+    assert MINT not in await state.get_watchlist()
