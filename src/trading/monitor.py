@@ -35,19 +35,29 @@ class Monitor:
         self.last_tick = 0.0
 
     async def run(self):
+        """Two speeds: every FAST_POLL_SEC for open positions and armed coins (where seconds
+        matter), and a full watchlist refresh every PRICE_POLL_SEC."""
         logger.info("Price monitor started.")
+        last_full = 0.0
         while True:
+            full = time.time() - last_full >= self.s.PRICE_POLL_SEC
             try:
-                await self.tick()
+                await self.tick(full=full)
+                if full:
+                    last_full = time.time()
             except Exception as e:
                 logger.exception(f"monitor tick failed: {e}")
-            await asyncio.sleep(self.s.PRICE_POLL_SEC)
+            await asyncio.sleep(self.s.FAST_POLL_SEC)
 
-    async def tick(self):
+    async def tick(self, full: bool = True):
         self.params = await load_params(self.state, self.s)
         watch = await self.state.get_watchlist()
         books = {name: await self.state.get_positions(name) for name in self.brokers}
         held = set().union(*books.values()) if books else set()
+        if not full:  # fast tick: only what is time-critical
+            watch = {m: w for m, w in watch.items() if w.get("status") == "armed"}
+            if not watch and not held:
+                return
         mints = list(set(watch) | held)
         if not mints:
             self.last_tick = time.time()
@@ -69,7 +79,8 @@ class Monitor:
             info = prices.get(mint)
             if info:
                 await self._watch(item, info)
-        self.last_tick = time.time()
+        if full:
+            self.last_tick = time.time()
 
     # ------------------------------------------------------------ entries
     async def _watch(self, item: dict, info: dict):

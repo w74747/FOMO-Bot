@@ -166,3 +166,22 @@ async def test_stop_loss_removes_from_watchlist(env):
     pos = await state.get_position(MINT)
     await step(mon, jup, pos["stop"] * 0.99)
     assert MINT not in await state.get_watchlist()
+
+
+async def test_fast_tick_only_prices_hot_coins(env):
+    state, db, jup, mon, msgs = env
+    calls = []
+    orig = jup.prices
+
+    async def spy(mints):
+        calls.append(set(mints))
+        return await orig(mints)
+    jup.prices = spy
+    await mon.tick(full=False)                     # nothing armed, nothing held -> no API call
+    assert calls == []
+    jup.price = 0.78
+    await mon.tick(full=True)                      # full tick arms the coin
+    jup.price = 0.80
+    await mon.tick(full=False)                     # fast tick sees the bounce and buys
+    assert MINT in calls[-1]
+    assert await state.get_position(MINT) is not None

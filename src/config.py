@@ -86,7 +86,8 @@ class Settings(BaseSettings):
     DAILY_REPORT_HOUR_UTC: int = 5   # 09:00 Muscat
 
     # --- Monitor ---
-    PRICE_POLL_SEC: int = 15
+    PRICE_POLL_SEC: int = 15          # full watchlist refresh
+    FAST_POLL_SEC: float = 3.0        # open positions + coins in the buy zone
     BOUNCE_CONFIRM_PCT: float = 0.02  # buy only after a 2% bounce off the local low
     LIQUIDITY_DROP_EXIT_PCT: float = 0.40
 
