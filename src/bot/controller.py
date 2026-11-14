@@ -349,9 +349,11 @@ class TelegramController:
         if not r["top"]:
             lines.append("لا يوجد إعداد بعدد صفقات كافٍ. اجمع بيانات أكثر بـ /collect.")
         elif r["recommend"]:
-            lines.append("✅ الإعداد #1 ربح أيضاً على المجموعة B التي لم يُختر عليها. يمكنك تطبيقه بـ <code>/apply 1</code>")
+            n = r["recommend"]
+            lines.append(f"✅ الإعداد #{n} ربح أيضاً على المجموعة B (15+ صفقة على 3+ عملات لم يُختر عليها). "
+                         f"يمكنك تطبيقه بـ <code>/apply {n}</code>")
         else:
-            lines.append("⚠️ لا أنصح بالتطبيق: أفضل إعداد لم يثبت ربحيته على المجموعة B (خطر الإفراط في التخصيص).")
+            lines.append("⚠️ لا أنصح بالتطبيق: لم يثبت أي إعداد ربحيته على عدد كافٍ من عملات المجموعة B.")
         return "\n".join(lines)
 
     async def cmd_apply(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

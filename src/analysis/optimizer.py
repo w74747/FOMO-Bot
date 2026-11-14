@@ -25,6 +25,8 @@ GRID = {
     "stop_drop_factor": [0.35, 0.50, 0.70],
 }
 MIN_TRADES_A = 12
+MIN_TOKENS_A = 5     # a config must work on several coins, not one lucky chart
+MIN_TOKENS_B = 3
 
 
 @dataclass
@@ -94,13 +96,16 @@ def optimize(
     for combo in itertools.product(*(grid[k] for k in keys)):
         results.append(evaluate(replace(base_params, **dict(zip(keys, combo)))))
 
-    eligible = [r for r in results if r.a.trades >= MIN_TRADES_A]
+    eligible = [r for r in results if r.a.trades >= MIN_TRADES_A and r.a.tokens_traded >= MIN_TOKENS_A]
     eligible.sort(key=lambda r: r.a.lcb_pct, reverse=True)
     top = eligible[:5]
-    best = top[0] if top else None
-    recommend = bool(
-        best and best.b.trades >= 8 and best.b.avg_pct > 0 and best.b.avg_pct >= current.b.avg_pct
-    )
+    # recommend the best-ranked config whose out-of-sample (B) evidence is broad enough
+    recommend_idx = None
+    for i, r in enumerate(top, 1):
+        if (r.b.trades >= 15 and r.b.tokens_traded >= MIN_TOKENS_B and r.b.avg_pct > 0
+                and r.b.avg_pct >= current.b.avg_pct):
+            recommend_idx = i
+            break
     return {
         "tokens": len(data),
         "tokens_a": sum(1 for d in data if d[3] == "A"),
@@ -108,5 +113,5 @@ def optimize(
         "configs_tested": len(results),
         "current": asdict(current),
         "top": [asdict(r) for r in top],
-        "recommend": recommend,
+        "recommend": recommend_idx,
     }
