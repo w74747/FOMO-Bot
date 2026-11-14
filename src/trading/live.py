@@ -103,7 +103,7 @@ class LiveBroker:
             "trail_pct": trail_pct(item.get("median_drop", 0.2), p),
             "opened_at": int(time.time()),
             "time_stop_at": int(time.time() + item.get("time_stop_hours", 24) * 3600),
-            "liquidity_at_entry": liquidity or item.get("liquidity") or 0,
+            "liquidity_at_entry": liquidity or item.get("liq_baseline"),
             "realized_usd": 0.0, "realized_sol": 0.0, "expected_pct": item.get("bt_avg"),
             "mode": self.mode, "buy_sig": r["signature"],
         }

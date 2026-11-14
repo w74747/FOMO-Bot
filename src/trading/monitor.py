@@ -29,6 +29,7 @@ class Monitor:
         if live_broker is not None:
             self.brokers["live"] = live_broker    # real money, only when /live on
         self._err_at: dict[str, float] = {}
+        self._liq_alarm: dict[str, tuple[float, int]] = {}
         self.s = settings
         self.params = StrategyParams.from_settings(settings)
         self.notify = notify
@@ -82,6 +83,26 @@ class Monitor:
         if full:
             self.last_tick = time.time()
 
+    def _liquidity_collapsed(self, key: str, liq: float | None, base: float | None) -> bool:
+        """True only when liquidity stays below the threshold for several readings over
+        LIQUIDITY_CONFIRM_SEC. One bad API reading must not trigger an exit; a real LP
+        withdrawal persists."""
+        if not liq or not base:
+            return False
+        if liq >= base * (1 - self.s.LIQUIDITY_DROP_EXIT_PCT):
+            self._liq_alarm.pop(key, None)
+            return False
+        first, count = self._liq_alarm.get(key, (time.time(), 0))
+        count += 1
+        self._liq_alarm[key] = (first, count)
+        if count == 1:
+            logger.warning(f"liquidity drop seen for {key}: {base:,.0f} -> {liq:,.0f} (waiting for confirmation)")
+        if count >= self.s.LIQUIDITY_CONFIRM_READS and time.time() - first >= self.s.LIQUIDITY_CONFIRM_SEC:
+            self._liq_alarm.pop(key, None)
+            logger.warning(f"liquidity collapse confirmed for {key}: {base:,.0f} -> {liq:,.0f}")
+            return True
+        return False
+
     # ------------------------------------------------------------ entries
     async def _watch(self, item: dict, info: dict):
         price, liq = info["price"], info.get("liquidity")
@@ -99,7 +120,7 @@ class Monitor:
             item["liq_baseline"] = liq
             changed = True
         base = item.get("liq_baseline")
-        if liq and base and liq < base * (1 - self.s.LIQUIDITY_DROP_EXIT_PCT):
+        if self._liquidity_collapsed(f"w:{mint}", liq, base):
             await self.state.remove_watch_item(mint)
             await self.state.set_cooldown(mint, self.s.LIQUIDITY_BAN_HOURS)
             await self.notify(f"⚠️ <b>{sym}</b>: السيولة انخفضت بشدة ({base:,.0f}$ ← {liq:,.0f}$). أُزيلت ومُنعت لمدة {self.s.LIQUIDITY_BAN_HOURS:.0f} ساعة.")
@@ -185,7 +206,13 @@ class Monitor:
         now = time.time()
         dirty = False
 
-        if liq and pos.get("liquidity_at_entry") and liq < pos["liquidity_at_entry"] * (1 - self.s.LIQUIDITY_DROP_EXIT_PCT):
+        if liq and not pos.get("liquidity_at_entry"):
+            pos["liquidity_at_entry"] = liq      # first same-source reading becomes the baseline
+            dirty = True
+        base = pos.get("liquidity_at_entry")
+        if self._liquidity_collapsed(f"{book}:{mint}", liq, base):
+            await self.notify(f"⚠️ <b>{escape(pos.get('symbol', '?'))}</b>: سحب سيولة مؤكد "
+                              f"({base:,.0f}$ ← {liq:,.0f}$ لمدة {self.s.LIQUIDITY_CONFIRM_SEC:.0f}+ ث). خروج فوري.")
             await self._exit(mint, 1.0, price, "سحب سيولة", liq, item, broker, cooldown=True)
             await self.state.set_cooldown(mint, self.s.LIQUIDITY_BAN_HOURS)
             await self.state.remove_watch_item(mint)

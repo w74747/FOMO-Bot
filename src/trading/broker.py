@@ -84,7 +84,8 @@ class PaperBroker:
             "trail_pct": trail_pct(item.get("median_drop", 0.2), params or StrategyParams()),
             "opened_at": int(time.time()),
             "time_stop_at": int(time.time() + item.get("time_stop_hours", 24) * 3600),
-            "liquidity_at_entry": liq,
+            # baseline from the SAME source the monitor reads later (Jupiter price API)
+            "liquidity_at_entry": liquidity or item.get("liq_baseline"),
             "realized_usd": 0.0,
             "expected_pct": item.get("bt_avg"),
             "mode": self.mode,

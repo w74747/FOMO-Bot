@@ -90,6 +90,8 @@ class Settings(BaseSettings):
     FAST_POLL_SEC: float = 3.0        # open positions + coins in the buy zone
     BOUNCE_CONFIRM_PCT: float = 0.02  # buy only after a 2% bounce off the local low
     LIQUIDITY_DROP_EXIT_PCT: float = 0.40
+    LIQUIDITY_CONFIRM_READS: int = 3       # a drop must persist this many readings…
+    LIQUIDITY_CONFIRM_SEC: float = 20.0    # …spanning at least this long (filters data blips)
 
     @property
     def max_slippage(self) -> float:

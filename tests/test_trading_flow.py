@@ -143,20 +143,43 @@ async def test_new_high_moves_plan_up(env):
     assert item["ref_high"] == 1.2 and abs(item["entry"] - 1.2 * (1 - 0.25 * 0.85)) < 1e-9
 
 
-async def test_liquidity_collapse_bans_coin(env):
+async def test_liquidity_collapse_bans_coin(env, monkeypatch):
     state, db, jup, mon, msgs = env
-
+    monkeypatch.setattr(settings, "LIQUIDITY_CONFIRM_SEC", 0)
     await step(mon, jup, 0.95)                         # baseline reading: 500k
 
     async def thin(mints):
         return {m: {"price": 0.95, "liquidity": 200_000} for m in mints}   # -60%
     jup.prices = thin
-    await mon.tick()
+    for _ in range(settings.LIQUIDITY_CONFIRM_READS):  # must persist several readings
+        await mon.tick()
     assert MINT not in await state.get_watchlist()
     assert await state.in_cooldown(MINT)
     await state.set_watch_item(MINT, watch_item())    # e.g. re-added by a scan
     await mon.tick()
     assert MINT not in await state.get_watchlist()    # banned coins are dropped again
+
+
+async def test_single_liquidity_blip_does_not_exit(env, monkeypatch):
+    state, db, jup, mon, msgs = env
+    monkeypatch.setattr(settings, "LIQUIDITY_CONFIRM_SEC", 0)
+    await step(mon, jup, 0.78)
+    await step(mon, jup, 0.80)                         # buy (baseline 500k)
+    assert await state.get_position(MINT)
+    orig = jup.prices
+
+    async def blip(mints):
+        return {m: {"price": 0.80, "liquidity": 100_000} for m in mints}
+    jup.prices = blip
+    await mon.tick()                                   # one bad reading
+    jup.prices = orig
+    await step(mon, jup, 0.80)                         # back to normal
+    jup.prices = blip
+    await mon.tick()                                   # another isolated blip
+    assert await state.get_position(MINT) is not None  # never exited on blips
+    for _ in range(settings.LIQUIDITY_CONFIRM_READS):
+        await mon.tick()                               # now it persists -> exit
+    assert await state.get_position(MINT) is None
 
 
 async def test_stop_loss_removes_from_watchlist(env):
