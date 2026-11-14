@@ -2,6 +2,15 @@
 import statistics
 from html import escape
 
+# Closes decided by a human (not by the strategy) are kept in history but excluded from
+# every performance metric and from the go-live gate.
+MANUAL_REASONS = {"إغلاق يدوي", "إيقاف طوارئ"}
+
+
+def strategy_closes(rows: list[dict]) -> list[dict]:
+    return [r for r in rows if (r.get("exit_reason") or "") not in MANUAL_REASONS]
+
+
 # Go-live criteria agreed before any results were seen.
 MIN_TRADES = 30
 MIN_EXPECTANCY_PCT = 2.0
@@ -37,8 +46,10 @@ def summarize(rows: list[dict]) -> dict:
 
 
 async def build_report(db, state, settings, hours: float = 24) -> str:
-    day_rows = await db.closed_positions(since_hours=hours)
-    every = await db.closed_positions()
+    day_rows = strategy_closes(await db.closed_positions(since_hours=hours))
+    raw_every = await db.closed_positions()
+    every = strategy_closes(raw_every)
+    manual = len(raw_every) - len(every)
     live_rows = [r for r in every if r.get("mode") == "live"]
     day = summarize([r for r in day_rows if (r.get("mode") or "paper") == "paper"])
     all_rows = [r for r in every if (r.get("mode") or "paper") == "paper"]
@@ -58,7 +69,8 @@ async def build_report(db, state, settings, hours: float = 24) -> str:
         lines.append("لم تُغلق صفقات في هذه الفترة.")
 
     lines.append("")
-    lines.append("🧭 <b>التقدم نحو شروط التداول الحقيقي</b>")
+    lines.append("🧭 <b>التقدم نحو شروط التداول الحقيقي</b>"
+                 + (f" <i>(مستبعد: {manual} إغلاق يدوي)</i>" if manual else ""))
     if tot["n"]:
         exp_txt = f" (الاختبار التاريخي توقّع {tot['expected']:+.1f}%)" if tot["expected"] is not None else ""
         c1 = tot["n"] >= MIN_TRADES

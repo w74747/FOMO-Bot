@@ -12,7 +12,7 @@ from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, filters
 
 from src.analysis.optimizer import optimize
-from src.bot.report import build_report
+from src.bot.report import build_report, strategy_closes
 from src.trading.monitor import fmt_price
 from src.trading.strategy import PARAM_NAMES, load_params
 
@@ -162,16 +162,20 @@ class TelegramController:
         ago = f"منذ {(time.time() - int(last_scan)) / 60:.0f} دقيقة" if last_scan else "لم يتم بعد"
         armed = sum(1 for w in watch.values() if w.get("status") == "armed")
         tick_age = time.time() - self.monitor.last_tick if self.monitor and self.monitor.last_tick else None
-        summary = await self.db.pnl_summary() if self.db else {}
+        rows = await self.db.closed_positions() if self.db else []
+        paper = [r for r in strategy_closes(rows) if (r.get('mode') or 'paper') == 'paper']
+        manual = sum(1 for r in rows if r not in strategy_closes(rows) and (r.get('mode') or 'paper') == 'paper')
         lines = [
             f"📊 <b>الحالة</b> — وضع <b>{self.s.TRADING_MODE}</b>{' ⏸ متوقف' if paused else ''}",
             f"الرصيد الورقي: <b>{bal:,.2f}$</b> · ربح/خسارة اليوم: <b>{pnl:+.2f}$</b> (الحد −{self.s.DAILY_LOSS_LIMIT_USD:.0f}$)",
             f"المراكز المفتوحة: {len(positions)}/{self.s.MAX_OPEN_POSITIONS} · قائمة المراقبة: {len(watch)} (جاهزة للشراء: {armed})",
             f"آخر مسح: {ago} · مراقب الأسعار: {'يعمل' if tick_age is not None and tick_age < 120 else 'متأخر/لم يبدأ'}",
         ]
-        if summary.get("closes"):
-            lines.append(f"إجمالي الصفقات المغلقة: {summary['closes']} · رابحة: {summary['wins']} · "
-                         f"صافي: {float(summary['total']):+.2f}$")
+        if paper or manual:
+            wins = sum(1 for r in paper if (r["pnl_usd"] or 0) > 0)
+            net = sum(r["pnl_usd"] or 0 for r in paper)
+            lines.append(f"صفقات الاستراتيجية المغلقة: {len(paper)}/{self.s.LIVE_MIN_PAPER_TRADES} · رابحة: {wins} · "
+                         f"صافي: {net:+.2f}$" + (f" · (مستبعد يدوي: {manual})" if manual else ""))
         if self.live:
             on = await self.state.live_enabled()
             lp = await self.state.get_positions("live")
@@ -467,7 +471,7 @@ class TelegramController:
         if arg not in ("on", "force"):
             await self._reply(update, "الاستخدام: <code>/live on</code> أو <code>/live off</code>")
             return
-        closed = await self.db.closed_positions()
+        closed = strategy_closes(await self.db.closed_positions())
         paper = [r for r in closed if (r.get("mode") or "paper") == "paper"]
         pnl = sum(r["pnl_usd"] or 0 for r in paper)
         ok = len(paper) >= self.s.LIVE_MIN_PAPER_TRADES and pnl > 0

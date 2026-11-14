@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     # --- Live trading safety (runs side by side with paper) ---
     LIVE_POSITION_USD: float = 10.0
-    LIVE_MAX_OPEN_POSITIONS: int = 2
+    LIVE_MAX_OPEN_POSITIONS: int = 5
     LIVE_DAILY_LOSS_USD: float = 15.0
     LIVE_SOL_RESERVE: float = 0.05           # never spend below this (fees + temporary rent)
     LIVE_EXIT_SLIPPAGE_BPS: int = 1000       # stops must get out even in a fast market
@@ -44,7 +44,7 @@ class Settings(BaseSettings):
 
     # --- Risk ---
     MAX_POSITION_USD: float = 20.0
-    MAX_OPEN_POSITIONS: int = 3
+    MAX_OPEN_POSITIONS: int = 5
     DAILY_LOSS_LIMIT_USD: float = 50.0
     MAX_SLIPPAGE_BPS: int = 300
     PAPER_START_BALANCE_USD: float = 1000.0

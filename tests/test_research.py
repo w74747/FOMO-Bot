@@ -130,3 +130,14 @@ async def test_scanner_requires_backtest_evidence_and_skips_banned():
     res = {a.pool.mint: a for a in await sc.run()}
     assert any("evidence" in r for r in res["NOEVID"].reasons)
     assert set(await state.get_watchlist()) == {"GOOD"}
+
+
+async def test_report_excludes_manual_closes():
+    import fakeredis.aioredis as fr
+    state = StateManager(client=fr.FakeRedis(decode_responses=True))
+    now = datetime.now(timezone.utc)
+    rows = [{"pnl_usd": -1.67, "return_pct": -8.0, "expected_pct": 6.0, "closed_at": now, "exit_reason": "وقف خسارة"},
+            {"pnl_usd": -1.41, "return_pct": -7.0, "expected_pct": 6.0, "closed_at": now, "exit_reason": "إغلاق يدوي"},
+            {"pnl_usd": 0.0, "return_pct": 0.0, "expected_pct": 6.0, "closed_at": now, "exit_reason": "إغلاق يدوي"}]
+    txt = await build_report(FakeDB(rows), state, settings)
+    assert "1/30" in txt and "مستبعد: 2" in txt and "-1.67$" in txt
