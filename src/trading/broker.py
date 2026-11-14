@@ -37,6 +37,12 @@ class PaperBroker:
         self.state = state
         self.db = db
         self.s = settings
+        self.sol_usd = settings.SOL_USD_FALLBACK
+
+    @property
+    def tx_fee_usd(self) -> float:
+        """Network fee (base + priority) per transaction, in USD."""
+        return self.s.TX_FEE_SOL * self.sol_usd
 
     async def buy(self, item: dict, price: float, liquidity: float | None, params=None) -> dict:
         reason = await check_risk(self.state, self.s, item["mint"])
@@ -53,7 +59,7 @@ class PaperBroker:
             raise RiskBlocked(f"الانزلاق المتوقع {impact:.1%} أعلى من الحد")
 
         fill = price * (1 + cost)
-        qty = size / fill
+        qty = (size - self.tx_fee_usd) / fill   # network fee is paid out of the position budget
         stop_pct = item.get("stop_pct", 0.1)
         rise = item.get("median_rise", 0.2)
         pos = {
@@ -95,7 +101,7 @@ class PaperBroker:
         liq = liquidity or pos.get("liquidity_at_entry") or 0
         value = qty * price
         fill = price * (1 - side_cost(value, liq))
-        proceeds = qty * fill
+        proceeds = qty * fill - self.tx_fee_usd
         basis = pos["cost_usd"] * (qty / pos["qty"])
         pnl = proceeds - basis
 

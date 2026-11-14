@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     LIQUIDITY_BAN_HOURS: float = 72.0   # coins whose liquidity collapsed are ignored this long
     MIN_BT_TRADES: int = 3              # no watchlist entry without back-test evidence
 
+    # --- Network costs (Solana) ---
+    # Conservative per-transaction cost: base fee (5,000 lamports/signature) + priority fee.
+    # A normal swap's priority fee is ~0.00001-0.00002 SOL; 0.0001 leaves room for congestion.
+    # A round trip is 3 transactions (buy, sell half, sell rest). The token-account rent
+    # (~0.002 SOL) is refunded when the account is closed after the final sell.
+    TX_FEE_SOL: float = 0.0001
+    SOL_USD_FALLBACK: float = 150.0
+
     # --- Scanner (which coins qualify) ---
     SCAN_INTERVAL_MIN: int = 240
     SCAN_POOL_PAGES: int = 5

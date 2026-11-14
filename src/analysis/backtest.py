@@ -36,6 +36,7 @@ def backtest(
     warmup: int = 240,
     refit_every: int = 24,
     stats_cache: dict | None = None,
+    tx_fee_usd: float = 0.0,
 ) -> BacktestResult:
     """`stats_cache` (optional) memoises wave stats per refit bar; it is only valid for one
     candle series and one zigzag pct, and lets the optimiser reuse work across parameter sets."""
@@ -44,6 +45,7 @@ def backtest(
         return empty
 
     cost_side = side_cost(position_usd, liquidity_usd)
+    fee = tx_fee_usd / max(position_usd, 1e-9)   # fixed network cost per transaction, as a fraction
     returns: list[float] = []
     stats = None
     pos = None  # dict with entry, stop, tp1, tp2, half_done, opened_idx, time_stop
@@ -63,7 +65,7 @@ def backtest(
             # same gate as live: the coin must still pass the wave score filters at this point in time
             tradeable = bool(stats) and not score(stats, liquidity_usd)[1] and build_plan(
                 stats.last_high, stats.median_drop, stats.median_rise, stats.avg_cycle_hours,
-                liquidity_usd, position_usd, params) is not None
+                liquidity_usd, position_usd, params, tx_fee_usd) is not None
             if stats and pos is None:
                 ref_high = stats.last_high
                 blocked_until_new_high = False
@@ -91,7 +93,7 @@ def backtest(
                     "tp1": lv["tp1"] * scale,
                     "tp2": lv["tp2"] * scale,
                     "half": False,
-                    "realized": 0.0,
+                    "realized": -fee,          # buy transaction
                     "peak": fill,
                     "trail": trail_pct(stats.median_drop, params),
                     "opened": i,
@@ -105,16 +107,16 @@ def backtest(
         if bar.l <= pos["stop"]:
             px = min(pos["stop"], bar.o)
             part = 0.5 if pos["half"] else 1.0
-            pos["realized"] += part * ((px - e) / e - 2 * cost_side)
+            pos["realized"] += part * ((px - e) / e - 2 * cost_side) - fee
             closed = True
         elif not pos["half"]:
             if bar.h >= pos["tp1"]:
-                pos["realized"] += 0.5 * ((pos["tp1"] - e) / e - 2 * cost_side)
+                pos["realized"] += 0.5 * ((pos["tp1"] - e) / e - 2 * cost_side) - fee
                 pos["half"] = True
                 pos["peak"] = pos["tp1"]
                 pos["stop"] = trailing_stop(max(pos["stop"], e), e, pos["peak"], pos["tp2"], pos["trail"])
             elif i - pos["opened"] >= pos["time_stop"]:
-                pos["realized"] += (bar.c - e) / e - 2 * cost_side
+                pos["realized"] += (bar.c - e) / e - 2 * cost_side - fee
                 closed = True
         else:
             pos["peak"] = max(pos["peak"], bar.h)

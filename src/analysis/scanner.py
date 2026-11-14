@@ -207,13 +207,15 @@ class Scanner:
             return a
         a.score, reasons = score(a.stats, pool.liquidity_usd)
         a.reasons.extend(reasons)
+        fee_usd = await self.state.tx_fee_usd(self.s)
         a.plan = build_plan(
             a.stats.last_high, a.stats.median_drop, a.stats.median_rise, a.stats.avg_cycle_hours,
-            pool.liquidity_usd, self.s.MAX_POSITION_USD, self.params,
+            pool.liquidity_usd, self.s.MAX_POSITION_USD, self.params, fee_usd,
         )
         if a.plan is None and not a.reasons:
             a.reasons.append("reward/risk too low after costs")
-        a.bt = backtest(candles, self.params.zigzag_pct, self.params, pool.liquidity_usd, self.s.MAX_POSITION_USD)
+        a.bt = backtest(candles, self.params.zigzag_pct, self.params, pool.liquidity_usd, self.s.MAX_POSITION_USD,
+                        tx_fee_usd=fee_usd)
         if a.bt.trades < self.s.MIN_BT_TRADES:
             a.reasons.append(f"not enough backtest evidence ({a.bt.trades} trades)")
         elif a.bt.total_return_pct < 0:

@@ -12,6 +12,9 @@ from src.trading.broker import RiskBlocked
 from src.trading.strategy import StrategyParams, levels, load_params, trailing_stop
 
 
+SOL_MINT = "So11111111111111111111111111111111111111112"
+
+
 def fmt_price(p: float) -> str:
     return f"{p:.4g}" if p >= 0.01 else f"{p:.3e}"
 
@@ -44,7 +47,11 @@ class Monitor:
         if not mints:
             self.last_tick = time.time()
             return
-        prices = await self.jupiter.prices(mints)
+        prices = await self.jupiter.prices(mints + [SOL_MINT])
+        sol = prices.get(SOL_MINT, {}).get("price")
+        if sol:
+            await self.state.set_meta("sol_usd", str(sol))
+            self.broker.sol_usd = sol
         for mint, pos in positions.items():
             info = prices.get(mint)
             if info:

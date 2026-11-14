@@ -316,8 +316,10 @@ class TelegramController:
             params = await load_params(self.state, self.s)
             started = time.time()
             loop = asyncio.get_running_loop()
+            fee_usd = await self.state.tx_fee_usd(self.s)
             with ProcessPoolExecutor(max_workers=1) as ex:
-                result = await loop.run_in_executor(ex, optimize, datasets, asdict(params), self.s.MAX_POSITION_USD)
+                result = await loop.run_in_executor(ex, optimize, datasets, asdict(params), self.s.MAX_POSITION_USD,
+                                                    None, fee_usd)
             await self.state.set_meta("last_opt", json.dumps(result))
             await self.send(self._format_opt(result, time.time() - started))
         except Exception as e:

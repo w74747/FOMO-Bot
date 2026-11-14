@@ -78,6 +78,7 @@ def optimize(
     base: dict,
     position_usd: float,
     grid: dict | None = None,
+    tx_fee_usd: float = 0.0,
 ) -> dict:
     """datasets: [(pool, [candle tuples], liquidity_usd)]. base: current StrategyParams as dict.
     Returns a JSON-able report with the current config and the top configs."""
@@ -90,7 +91,8 @@ def optimize(
         per = {"A": [], "B": []}
         for pool, candles, liq, side in data:
             cache = caches.setdefault((pool, params.zigzag_pct), {})
-            r = backtest(candles, params.zigzag_pct, params, liq, position_usd, stats_cache=cache)
+            r = backtest(candles, params.zigzag_pct, params, liq, position_usd, stats_cache=cache,
+                         tx_fee_usd=tx_fee_usd)
             per[side].append(r.returns)
         return ConfigResult(asdict(params), _set_stats(per["A"]), _set_stats(per["B"]))
 

@@ -3,6 +3,7 @@ from dataclasses import asdict, dataclass, fields, replace
 
 JUPITER_FEE = 0.001     # ~5-10 bps Jupiter + rounding
 POOL_FEE = 0.0025       # typical DEX pool fee per side
+TX_PER_ROUND_TRIP = 3   # buy, sell half at target 1, sell the rest
 
 
 @dataclass
@@ -102,11 +103,12 @@ def build_plan(
     liquidity_usd: float,
     position_usd: float,
     p: StrategyParams,
+    tx_fee_usd: float = 0.0,
 ) -> TradePlan | None:
     if ref_high <= 0 or median_drop <= 0 or median_rise <= 0:
         return None
     lv = levels(ref_high, median_drop, median_rise, p)
-    cost = 2 * side_cost(position_usd, liquidity_usd)
+    cost = 2 * side_cost(position_usd, liquidity_usd) + TX_PER_ROUND_TRIP * tx_fee_usd / max(position_usd, 1e-9)
     e = lv["entry"]
     reward = 0.5 * (lv["tp1"] - e) / e + 0.5 * (lv["tp2"] - e) / e - cost
     risk = lv["stop_pct"] + cost

@@ -116,5 +116,12 @@ class StateManager:
     async def get_meta(self, key: str) -> str | None:
         return await self.r.get(P + "meta:" + key)
 
+    async def sol_usd(self, fallback: float) -> float:
+        v = await self.get_meta("sol_usd")
+        return float(v) if v else fallback
+
+    async def tx_fee_usd(self, settings) -> float:
+        return settings.TX_FEE_SOL * await self.sol_usd(settings.SOL_USD_FALLBACK)
+
     async def mark_scan(self):
         await self.set_meta("last_scan", str(int(time.time())))

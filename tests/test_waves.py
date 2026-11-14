@@ -80,3 +80,13 @@ def test_clean_candles_removes_spikes_but_keeps_real_waves():
     st_raw, st_clean = wave_stats(raw, 0.10), wave_stats(cleaned, 0.10)
     assert max(st_clean.rises) < max(st_raw.rises)
     assert isinstance(cleaned[0], Candle)
+
+
+def test_network_fees_reduce_backtest_and_plan():
+    p = StrategyParams()
+    free = backtest(wave_candles(), 0.10, p, 300_000, 20)
+    paid = backtest(wave_candles(), 0.10, p, 300_000, 20, tx_fee_usd=0.5)   # 2.5% of $20 per tx
+    assert paid.trades == free.trades and paid.total_return_pct < free.total_return_pct
+    a = build_plan(1.0, 0.25, 0.35, 36, 300_000, 20, p)
+    b = build_plan(1.0, 0.25, 0.35, 36, 300_000, 20, p, tx_fee_usd=0.5)
+    assert b is None or b.cost_pct > a.cost_pct
