@@ -361,7 +361,8 @@ class Scanner:
                 "bt_trades": a.bt.trades if a.bt else 0,
                 "bt_return": a.bt.total_return_pct if a.bt else 0.0,
                 "bt_avg": a.bt.avg_return_pct if a.bt else 0.0,
-                "status": prev.get("status", "waiting") if prev.get("status") == "armed" else "waiting",
+                "status": "holding" if p.mint in positions else (
+                    "armed" if prev.get("status") == "armed" else "waiting"),
                 "local_min": prev.get("local_min") if prev.get("status") == "armed" else None,
                 "added_at": prev.get("added_at", now),
                 "liq_baseline": prev.get("liq_baseline"),
