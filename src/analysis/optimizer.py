@@ -39,7 +39,8 @@ class SetStats:
     avg_pct: float        # expectancy per trade, %
     total_pct: float      # sum of trade returns, % (fixed size)
     worst_pct: float
-    lcb_pct: float        # pessimistic expectancy (mean - std error), used for ranking
+    lcb_pct: float        # pessimistic expectancy (mean - std error)
+    total_lcb_pct: float  # pessimistic TOTAL profit = lcb x trades (expectancy x opportunities)
 
 
 @dataclass
@@ -53,7 +54,7 @@ def _set_stats(per_token: list[list[float]]) -> SetStats:
     rets = [r for tok in per_token for r in tok]
     n = len(rets)
     if n == 0:
-        return SetStats(0, 0, 0.0, 0.0, 0.0, 0.0, -999.0)
+        return SetStats(0, 0, 0.0, 0.0, 0.0, 0.0, -999.0, -999.0)
     mean = sum(rets) / n
     sd = statistics.pstdev(rets) if n > 1 else abs(mean)
     return SetStats(
@@ -64,6 +65,7 @@ def _set_stats(per_token: list[list[float]]) -> SetStats:
         total_pct=round(sum(rets) * 100, 1),
         worst_pct=round(min(rets) * 100, 1),
         lcb_pct=round((mean - sd / math.sqrt(n)) * 100, 2),
+        total_lcb_pct=round((mean - sd / math.sqrt(n)) * n * 100, 1),
     )
 
 
@@ -99,13 +101,15 @@ def optimize(
         results.append(evaluate(replace(base_params, **dict(zip(keys, combo)))))
 
     eligible = [r for r in results if r.a.trades >= MIN_TRADES_A and r.a.tokens_traded >= MIN_TOKENS_A]
-    eligible.sort(key=lambda r: r.a.lcb_pct, reverse=True)
+    # Rank by pessimistic TOTAL profit: a config earning +6% on 200 trades beats +13% on 80,
+    # because with a fixed position size the bot earns expectancy x number of opportunities.
+    eligible.sort(key=lambda r: r.a.total_lcb_pct, reverse=True)
     top = eligible[:5]
     # recommend the best-ranked config whose out-of-sample (B) evidence is broad enough
     recommend_idx = None
     for i, r in enumerate(top, 1):
         if (r.b.trades >= 15 and r.b.tokens_traded >= MIN_TOKENS_B and r.b.avg_pct > 0
-                and r.b.avg_pct >= current.b.avg_pct):
+                and r.b.total_lcb_pct > max(current.b.total_lcb_pct, 0) * 1.10):  # >=10% better
             recommend_idx = i
             break
     return {

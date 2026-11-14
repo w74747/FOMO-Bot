@@ -331,7 +331,7 @@ class TelegramController:
         if not st["trades"]:
             return "لا صفقات"
         return (f"{st['trades']} صفقة/{st['tokens_traded']} عملة · فوز {st['win_rate']:.0%} · "
-                f"متوسط {st['avg_pct']:+.2f}% · أسوأ {st['worst_pct']:+.1f}%")
+                f"متوسط {st['avg_pct']:+.2f}% · مجموع حذر {st.get('total_lcb_pct', 0):+.0f}% · أسوأ {st['worst_pct']:+.1f}%")
 
     def _format_opt(self, r: dict, secs: float) -> str:
         short = {"zigzag_pct": "zz", "entry_drop_factor": "دخول", "tp1_factor": "هدف1",
@@ -348,12 +348,15 @@ class TelegramController:
             ps = " ".join(f"{short[k]}={c['params'][k]}" for k in short)
             lines += ["", f"<b>#{i}</b> {escape(ps)}", f"A: {self._fmt_set(c['a'])}", f"B: {self._fmt_set(c['b'])}"]
         lines.append("")
+        lines.append("<i>«مجموع حذر» = متوسط الصفقة المتحفظ × عدد الفرص: الأهم مع حجم صفقة ثابت.</i>")
         if not r["top"]:
             lines.append("لا يوجد إعداد بعدد صفقات كافٍ. اجمع بيانات أكثر بـ /collect.")
         elif r["recommend"]:
             n = r["recommend"]
-            lines.append(f"✅ الإعداد #{n} ربح أيضاً على المجموعة B (15+ صفقة على 3+ عملات لم يُختر عليها). "
-                         f"يمكنك تطبيقه بـ <code>/apply {n}</code>")
+            lines.append(f"✅ الإعداد #{n} أفضل من الحالي بوضوح (10%+ في الربح الإجمالي الحذر) على المجموعة B "
+                         f"التي لم يُختر عليها. يمكنك تطبيقه بـ <code>/apply {n}</code>")
+        elif r["current"]["b"]["avg_pct"] > 0:
+            lines.append("👍 أبقِ الإعدادات الحالية: لا يوجد إعداد يتفوق عليها بوضوح على المجموعة B.")
         else:
             lines.append("⚠️ لا أنصح بالتطبيق: لم يثبت أي إعداد ربحيته على عدد كافٍ من عملات المجموعة B.")
         return "\n".join(lines)
