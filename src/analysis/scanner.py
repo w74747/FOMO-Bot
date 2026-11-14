@@ -394,13 +394,12 @@ class Scanner:
         if prefilter_rejected:
             lines.append("مستبعدة في الفلترة الأولية: " + "، ".join(
                 f"{escape(k)} ×{v}" for k, v in sorted(prefilter_rejected.items(), key=lambda x: -x[1])[:6]))
-        if not accepted:
-            top_reasons: dict[str, int] = {}
-            for a in results:
-                for r in a.reasons[:1]:
-                    key = r.split("(")[0].strip()
-                    top_reasons[key] = top_reasons.get(key, 0) + 1
-            if top_reasons:
-                lines.append("أهم أسباب الرفض: " + "، ".join(
-                    f"{escape(k)} ×{v}" for k, v in sorted(top_reasons.items(), key=lambda x: -x[1])[:5]))
+        top_reasons: dict[str, int] = {}
+        for a in results:
+            for r in a.reasons[:1]:
+                key = r.split("(")[0].strip()
+                top_reasons[key] = top_reasons.get(key, 0) + 1
+        if top_reasons:
+            lines.append("رُفضت بعد التحليل: " + "، ".join(
+                f"{escape(k)} ×{v}" for k, v in sorted(top_reasons.items(), key=lambda x: -x[1])[:6]))
         return "\n".join(lines)
