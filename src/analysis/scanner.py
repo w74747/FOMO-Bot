@@ -7,7 +7,7 @@ from typing import Awaitable, Callable
 from loguru import logger
 
 from src.analysis.backtest import BacktestResult, backtest
-from src.analysis.waves import WaveStats, score, wave_stats
+from src.analysis.waves import WaveStats, clean_candles, score, wave_stats
 from src.data.geckoterminal import QUOTE_SYMBOLS, GeckoClient
 from src.data.http import HttpError
 from src.data.models import PoolInfo
@@ -199,6 +199,7 @@ class Scanner:
         except HttpError as e:
             a.reasons.append(f"no candles ({e.status})")
             return a
+        candles = clean_candles(candles)
         recent = candles[-self.s.HISTORY_HOURS:]
         a.stats = wave_stats(recent, self.params.zigzag_pct)
         if a.stats is None:
@@ -318,7 +319,7 @@ class Scanner:
 
             accepted = sorted((a for a in results if a.accepted), key=lambda a: a.score, reverse=True)
             accepted = accepted[: self.s.WATCHLIST_SIZE]
-            await self._update_watchlist(accepted)
+            accepted = await self._update_watchlist(accepted)
             await self.state.mark_scan()
             logger.info(f"Scan done in {time.time() - started:.0f}s: {len(accepted)} on watchlist")
             if self.notify:
@@ -327,15 +328,18 @@ class Scanner:
         finally:
             self.running = False
 
-    async def _update_watchlist(self, accepted: list[Analysis]):
+    async def _update_watchlist(self, accepted: list[Analysis]) -> list[Analysis]:
+        """Write the watchlist; returns the analyses that were actually added."""
         old = await self.state.get_watchlist()
         positions = await self.state.get_positions()
         new: dict[str, dict] = {}
+        added: list[Analysis] = []
         now = int(time.time())
         for a in accepted:
             p, st, pl = a.pool, a.stats, a.plan
             if await self.state.in_cooldown(p.mint) and p.mint not in positions:
                 continue  # recently stopped out or liquidity collapsed
+            added.append(a)
             prev = old.get(p.mint, {})
             new[p.mint] = {
                 "mint": p.mint,
@@ -360,6 +364,7 @@ class Scanner:
                 "status": prev.get("status", "waiting") if prev.get("status") == "armed" else "waiting",
                 "local_min": prev.get("local_min") if prev.get("status") == "armed" else None,
                 "added_at": prev.get("added_at", now),
+                "liq_baseline": prev.get("liq_baseline"),
                 "updated_at": now,
             }
         # keep items that have an open position even if they dropped off the list
@@ -367,6 +372,7 @@ class Scanner:
             if mint not in new and mint in old:
                 new[mint] = {**old[mint], "status": "holding"}
         await self.state.replace_watchlist(new)
+        return added
 
     def _report(self, n_pools, n_kept, results, accepted, secs, prefilter_rejected=None) -> str:
         from html import escape

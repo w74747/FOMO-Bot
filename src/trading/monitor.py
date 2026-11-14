@@ -68,10 +68,16 @@ class Monitor:
             await self.state.remove_watch_item(mint)
             return
 
-        if liq and item.get("liquidity") and liq < item["liquidity"] * (1 - self.s.LIQUIDITY_DROP_EXIT_PCT):
+        # Compare like with like: the baseline is the first Jupiter price-API liquidity reading
+        # for this coin (the scanner's number comes from a different source).
+        if liq and not item.get("liq_baseline"):
+            item["liq_baseline"] = liq
+            changed = True
+        base = item.get("liq_baseline")
+        if liq and base and liq < base * (1 - self.s.LIQUIDITY_DROP_EXIT_PCT):
             await self.state.remove_watch_item(mint)
             await self.state.set_cooldown(mint, self.s.LIQUIDITY_BAN_HOURS)
-            await self.notify(f"⚠️ <b>{sym}</b>: السيولة انخفضت بشدة ({item['liquidity']:,.0f}$ ← {liq:,.0f}$). أُزيلت ومُنعت لمدة {self.s.LIQUIDITY_BAN_HOURS:.0f} ساعة.")
+            await self.notify(f"⚠️ <b>{sym}</b>: السيولة انخفضت بشدة ({base:,.0f}$ ← {liq:,.0f}$). أُزيلت ومُنعت لمدة {self.s.LIQUIDITY_BAN_HOURS:.0f} ساعة.")
             return
 
         # new high -> move the whole plan up

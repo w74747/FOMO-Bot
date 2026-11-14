@@ -14,6 +14,7 @@ import statistics
 from dataclasses import asdict, dataclass, replace
 
 from src.analysis.backtest import backtest
+from src.analysis.waves import clean_candles
 from src.data.models import Candle
 from src.trading.strategy import StrategyParams
 
@@ -80,7 +81,7 @@ def optimize(
     Returns a JSON-able report with the current config and the top configs."""
     grid = grid or GRID
     base_params = StrategyParams(**base)
-    data = [(pool, [Candle(*c) for c in cs], liq, split_of(pool)) for pool, cs, liq in datasets]
+    data = [(pool, clean_candles([Candle(*c) for c in cs]), liq, split_of(pool)) for pool, cs, liq in datasets]
     caches: dict[tuple[str, float], dict] = {}
 
     def evaluate(params: StrategyParams) -> ConfigResult:

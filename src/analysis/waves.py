@@ -9,6 +9,32 @@ from dataclasses import asdict, dataclass, field
 from src.data.models import Candle
 
 
+def clean_candles(candles: list[Candle], max_wick: float = 0.5, max_jump: float = 0.6) -> list[Candle]:
+    """Remove data glitches that fake huge waves:
+    * wicks more than `max_wick` beyond the candle body are clipped;
+    * a single close that jumps more than `max_jump` away from BOTH neighbours, while the
+      neighbours agree with each other, is replaced by their average (one-candle spike)."""
+    if len(candles) < 3:
+        return list(candles)
+    out = []
+    for c in candles:
+        top, bot = max(c.o, c.c), min(c.o, c.c)
+        h = min(c.h, top * (1 + max_wick))
+        l = max(c.l, bot / (1 + max_wick))
+        out.append(c._replace(h=max(h, top), l=min(l, bot)))
+    for i in range(1, len(out) - 1):
+        prev, cur, nxt = out[i - 1].c, out[i].c, out[i + 1].c
+        if prev <= 0 or nxt <= 0:
+            continue
+        neighbours_agree = abs(nxt / prev - 1) < 0.2
+        if neighbours_agree and abs(cur / prev - 1) > max_jump and abs(cur / nxt - 1) > max_jump:
+            fix = (prev + nxt) / 2
+            c = out[i]
+            out[i] = c._replace(o=prev, c=fix, h=max(prev, fix), l=min(prev, fix))
+            out[i + 1] = out[i + 1]._replace(o=fix, h=max(out[i + 1].h, fix), l=min(out[i + 1].l, fix))
+    return out
+
+
 @dataclass
 class Pivot:
     idx: int

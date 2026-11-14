@@ -63,3 +63,20 @@ def test_backtest_stop_limits_loss_on_rug():
         c.append(Candle(t + i * 3600, px, px * 1.01, px * 0.99, px, 1))
     r = backtest(c, 0.10, StrategyParams(), 300_000, 20)
     assert r.worst_trade_pct > -20   # stop caps the damage of a 70% collapse
+
+
+def test_clean_candles_removes_spikes_but_keeps_real_waves():
+    from src.analysis.waves import clean_candles
+    from src.data.models import Candle
+    c = wave_candles(hours=200)
+    raw = list(c)
+    raw[100] = raw[100]._replace(h=raw[100].h * 5)                       # absurd wick
+    raw[120] = raw[120]._replace(c=raw[120].c * 4, h=raw[120].c * 4)     # one-candle close spike
+    cleaned = clean_candles(raw)
+    assert cleaned[100].h <= max(cleaned[100].o, cleaned[100].c) * 1.5 + 1e-12
+    assert cleaned[120].c < raw[120].c / 2
+    # genuine sine waves are untouched in their closes
+    assert all(abs(a.c - b.c) < 1e-12 for a, b in zip(c[:99], cleaned[:99]))
+    st_raw, st_clean = wave_stats(raw, 0.10), wave_stats(cleaned, 0.10)
+    assert max(st_clean.rises) < max(st_raw.rises)
+    assert isinstance(cleaned[0], Candle)

@@ -146,8 +146,10 @@ async def test_new_high_moves_plan_up(env):
 async def test_liquidity_collapse_bans_coin(env):
     state, db, jup, mon, msgs = env
 
+    await step(mon, jup, 0.95)                         # baseline reading: 500k
+
     async def thin(mints):
-        return {m: {"price": 0.95, "liquidity": 200_000} for m in mints}   # was 500k
+        return {m: {"price": 0.95, "liquidity": 200_000} for m in mints}   # -60%
     jup.prices = thin
     await mon.tick()
     assert MINT not in await state.get_watchlist()
