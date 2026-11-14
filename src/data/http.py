@@ -1,14 +1,23 @@
 """Shared HTTP session with rate limiting and retries."""
 import asyncio
+import re
 import time
 
 import aiohttp
 from loguru import logger
 
 
+_SECRET_RE = re.compile(r"((?:api[-_]?key|x-api-key|apikey)=)[^&\s\"']+", re.I)
+
+
+def redact(text: str) -> str:
+    """Hide API keys in URLs before anything is logged or sent to Telegram."""
+    return _SECRET_RE.sub(r"\1***", text)
+
+
 class HttpError(Exception):
     def __init__(self, status: int, url: str, body: str = ""):
-        super().__init__(f"HTTP {status} for {url}: {body[:200]}")
+        super().__init__(redact(f"HTTP {status} for {url}: {body[:200]}"))
         self.status = status
 
 
@@ -74,7 +83,7 @@ class Http:
                         delay = min(max(hinted, backoff * 15), 180.0)  # never retry instantly
                         if limiter and resp.status == 429:
                             limiter.penalize(delay)
-                        logger.warning(f"{resp.status} from {url}, retry in {delay:.0f}s")
+                        logger.warning(f"{resp.status} from {redact(url)}, retry in {delay:.0f}s")
                         if attempt < retries:
                             await asyncio.sleep(delay)
                             backoff *= 2

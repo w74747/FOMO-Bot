@@ -94,3 +94,9 @@ def test_parse_multi_top_pools():
     out = parse_multi_top_pools(payload)
     assert {p.pool_address for p in out["MEMEMINT"]} == {"P1", "P2"}
     assert {p.quote_symbol for p in out["MEMEMINT"]} == {"SOL", "USDC"}
+
+
+def test_http_error_redacts_api_keys():
+    from src.data.http import HttpError
+    e = HttpError(401, "https://mainnet.helius-rpc.com/?api-key=abc-123-SECRET", "bad api-key=SECRET2")
+    assert "SECRET" not in str(e) and "api-key=***" in str(e)

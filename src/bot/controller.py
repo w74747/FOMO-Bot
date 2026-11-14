@@ -99,8 +99,26 @@ class TelegramController:
             "wallet": self.cmd_wallet, "live": self.cmd_live, "livetest": self.cmd_livetest, "stop": self.cmd_stop,
         }
         for name, fn in table.items():
-            self.app.add_handler(CommandHandler(name, fn, filters=admin))
+            self.app.add_handler(CommandHandler(name, self._logged(name, fn), filters=admin))
         self.app.add_handler(CallbackQueryHandler(self.on_button))
+        self.app.add_error_handler(self.on_error)
+
+    def _logged(self, name, fn):
+        async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            logger.info(f"command /{name} args={context.args}")
+            await fn(update, context)
+        return wrapper
+
+    async def on_error(self, update, context: ContextTypes.DEFAULT_TYPE):
+        err = context.error
+        if isinstance(err, Exception) and type(err).__name__ in ("Conflict", "NetworkError", "TimedOut"):
+            logger.warning(f"telegram transient: {type(err).__name__}")
+            return
+        logger.opt(exception=err).error(f"handler error: {err!r}")
+        try:
+            await self.send(f"❌ خطأ داخلي: <code>{escape(type(err).__name__)}: {escape(str(err))[:400]}</code>")
+        except Exception:
+            pass
 
     def _spawn(self, coro):
         t = asyncio.create_task(coro)
@@ -414,14 +432,29 @@ class TelegramController:
     async def cmd_wallet(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._need_live(update):
             return
-        lam = await self.live.wallet.sol_balance()
-        sol = lam / 1e9
-        on = await self.state.live_enabled()
-        await self._reply(update, (
-            f"💼 <b>المحفظة</b>\n<code>{self.live.wallet.address}</code>\n"
-            f"الرصيد: <b>{sol:.5f} SOL</b> ≈ {sol * self.live.sol_usd:,.2f}$\n"
-            f"المتاح للتداول بعد الاحتياطي ({self.s.LIVE_SOL_RESERVE} SOL): {max(0, sol - self.s.LIVE_SOL_RESERVE):.4f} SOL\n"
-            f"التداول الحقيقي: <b>{'يعمل' if on else 'متوقف'}</b>"))
+        w = self.live.wallet
+        host = w.rpc_url.split("//")[-1].split("/")[0].split("?")[0]
+        lines = ["💼 <b>المحفظة</b>", f"<code>{w.address}</code>",
+                 f"(العنوان مشتق من WALLET_PRIVATE_KEY) · RPC: {escape(host)}"]
+        try:
+            lam = await w.sol_balance()
+            sol = lam / 1e9
+            logger.info(f"wallet {w.address} balance {lam} lamports")
+            lines.append(f"الرصيد: <b>{sol:.5f} SOL</b> ({lam:,} lamports) ≈ {sol * self.live.sol_usd:,.2f}$")
+            lines.append(f"المتاح للتداول بعد الاحتياطي ({self.s.LIVE_SOL_RESERVE} SOL): "
+                         f"{max(0, sol - self.s.LIVE_SOL_RESERVE):.4f} SOL")
+            if lam == 0:
+                info = await w.rpc("getAccountInfo", [w.address, {"encoding": "base64"}])
+                exists = bool(info and info.get("value"))
+                lines.append("⚠️ الرصيد صفر على الشبكة الرئيسية" + (" (الحساب موجود)" if exists else
+                             " والحساب غير موجود على السلسلة إطلاقاً: لم يصل إليه أي تحويل. "
+                             "تأكد أن هذا هو العنوان الذي شحنته."))
+        except Exception as e:
+            logger.exception("wallet balance failed")
+            lines.append(f"❌ تعذّرت قراءة الرصيد: <code>{escape(type(e).__name__)}: {escape(str(e))[:300]}</code>")
+        lines.append(f"التداول الحقيقي: <b>{'يعمل' if await self.state.live_enabled() else 'متوقف'}</b>")
+        lines.append(f"🔗 https://solscan.io/account/{w.address}")
+        await self._reply(update, "\n".join(lines))
 
     async def cmd_live(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._need_live(update):
