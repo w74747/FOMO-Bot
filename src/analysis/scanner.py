@@ -1,5 +1,6 @@
 """Scanner: discovers live Solana meme pools, filters them, analyses their waves,
 back-tests the strategy on each, and builds the watchlist."""
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
@@ -133,6 +134,16 @@ def merge_token_into_pool(pool: PoolInfo, t: dict) -> PoolInfo:
     return pool
 
 
+BASE58_RE = re.compile(r"[1-9A-HJ-NP-Za-km-z]{32,44}")
+
+
+def extract_address(text: str) -> str | None:
+    """Pull a Solana address out of a raw address or a pasted link
+    (Birdeye, Solscan, pump.fun, Jupiter, DexScreener…)."""
+    found = BASE58_RE.findall(text or "")
+    return max(found, key=len) if found else None
+
+
 class Scanner:
     def __init__(self, gecko: GeckoClient, safety: SafetyChecker, state, db, settings,
                  notify: Callable[[str], Awaitable[None]] | None = None,
@@ -146,6 +157,7 @@ class Scanner:
         self.params = StrategyParams.from_settings(settings)
         self.notify = notify
         self.running = False
+        self._manual_results: list[Analysis] = []
 
     async def discover_tokens(self) -> list[dict]:
         tokens: list[dict] = []
@@ -278,30 +290,27 @@ class Scanner:
             n_candles += len(candles)
         return n_pools, n_candles
 
-    async def analyze_mint(self, mint: str) -> Analysis | None:
-        self.params = await load_params(self.state, self.s)
-        token = None
-        if self.jupiter:
-            try:
-                info = await self.jupiter.token_info([mint])
-                token = next((t for t in info if t["mint"] == mint), None)
-            except HttpError:
-                token = None
-        pools = await self.gecko.best_pools([mint])
-        if mint not in pools:
-            return None
-        pool = merge_token_into_pool(pools[mint], token) if token else pools[mint]
-        return await self.analyze_pool(pool, token)
-
     async def run(self) -> list[Analysis]:
         if self.running:
             logger.info("Scan already running; skipped.")
             return []
         self.running = True
+        self._manual_results = []
         started = time.time()
         try:
             self.params = await load_params(self.state, self.s)
             n_seen, kept, rejected = await self.candidates()
+            manual = await self.state.get_manual()
+            for mint in manual - {p.mint for p, _ in kept}:
+                try:
+                    a, why = await self.analyze_manual(mint)
+                except Exception as e:
+                    logger.warning(f"manual coin {mint} failed: {e}")
+                    continue
+                if a is not None:
+                    if why and why not in a.reasons:
+                        a.reasons.insert(0, why)
+                    self._manual_results.append(a)
             logger.info(f"Scan: {n_seen} tokens/pools seen, {len(kept)} to analyse, rejected={rejected}")
 
             results: list[Analysis] = []
@@ -319,8 +328,16 @@ class Scanner:
                     a.plan.to_dict() if a.plan else None,
                 )
 
-            accepted = sorted((a for a in results if a.accepted), key=lambda a: a.score, reverse=True)
-            accepted = accepted[: self.s.WATCHLIST_SIZE]
+            results.extend(self._manual_results)
+            for a in self._manual_results:
+                await self.db.save_analysis(
+                    a.pool.mint, a.pool.symbol, a.pool.pool_address, a.score,
+                    a.stats.to_dict() if a.stats else {}, a.bt.to_dict() if a.bt else {},
+                    a.plan.to_dict() if a.plan else None)
+            manual_ok = [a for a in self._manual_results if a.accepted]
+            auto_ok = sorted((a for a in results if a.accepted and a not in manual_ok),
+                             key=lambda a: a.score, reverse=True)
+            accepted = manual_ok + auto_ok[: self.s.WATCHLIST_SIZE]   # user coins come on top
             accepted = await self._update_watchlist(accepted)
             await self.state.mark_scan()
             logger.info(f"Scan done in {time.time() - started:.0f}s: {len(accepted)} on watchlist")
@@ -330,6 +347,74 @@ class Scanner:
         finally:
             self.running = False
 
+    @staticmethod
+    def watch_item(a: Analysis, prev: dict, positions: set[str], now: int, manual: bool = False) -> dict:
+        p, st, pl = a.pool, a.stats, a.plan
+        return {
+            "mint": p.mint,
+            "symbol": p.symbol,
+            "pool": p.pool_address,
+            "liquidity": p.liquidity_usd,
+            "score": a.score,
+            "median_drop": st.median_drop,
+            "median_rise": st.median_rise,
+            "avg_cycle_hours": st.avg_cycle_hours,
+            "ref_high": pl.ref_high,
+            "entry": pl.entry,
+            "stop": pl.stop,
+            "tp1": pl.tp1,
+            "tp2": pl.tp2,
+            "stop_pct": pl.stop_pct,
+            "time_stop_hours": pl.time_stop_hours,
+            "reward_risk": pl.reward_risk,
+            "bt_trades": a.bt.trades if a.bt else 0,
+            "bt_return": a.bt.total_return_pct if a.bt else 0.0,
+            "bt_avg": a.bt.avg_return_pct if a.bt else 0.0,
+            "status": "holding" if p.mint in positions else (
+                "armed" if prev.get("status") == "armed" else "waiting"),
+            "local_min": prev.get("local_min") if prev.get("status") == "armed" else None,
+            "added_at": prev.get("added_at", now),
+            "liq_baseline": prev.get("liq_baseline"),
+            "manual": manual or prev.get("manual", False),
+            "updated_at": now,
+        }
+
+    async def resolve_mint(self, text: str) -> str | None:
+        """Accept a mint or a pasted link; if it is a pool/pair address, map it to the token."""
+        addr = extract_address(text)
+        if not addr:
+            return None
+        if self.jupiter:
+            try:
+                if any(t["mint"] == addr for t in await self.jupiter.token_info([addr])):
+                    return addr
+            except HttpError:
+                pass
+        return await self.gecko.pool_base_mint(addr) or addr
+
+    async def analyze_manual(self, mint: str) -> tuple[Analysis | None, str | None]:
+        """Analyse a user-suggested coin with the SAME rules as the scanner.
+        Returns (analysis, prefilter_rejection_reason)."""
+        self.params = await load_params(self.state, self.s)
+        token = None
+        if self.jupiter:
+            try:
+                token = next((t for t in await self.jupiter.token_info([mint]) if t["mint"] == mint), None)
+            except HttpError:
+                token = None
+        if token:
+            _, rejected = prefilter_tokens([token], self.s)
+            if rejected:
+                reason = next(iter(rejected))
+                pools = await self.gecko.best_pools([mint])
+                a = await self.analyze_pool(merge_token_into_pool(pools[mint], token), token) if mint in pools else None
+                return a, reason
+        pools = await self.gecko.best_pools([mint])
+        if mint not in pools:
+            return None, "no supported pool"
+        pool = merge_token_into_pool(pools[mint], token) if token else pools[mint]
+        return await self.analyze_pool(pool, token), None
+
     async def _update_watchlist(self, accepted: list[Analysis]) -> list[Analysis]:
         """Write the watchlist; returns the analyses that were actually added."""
         old = await self.state.get_watchlist()
@@ -338,38 +423,12 @@ class Scanner:
         added: list[Analysis] = []
         now = int(time.time())
         for a in accepted:
-            p, st, pl = a.pool, a.stats, a.plan
+            p = a.pool
             if await self.state.in_cooldown(p.mint) and p.mint not in positions:
                 continue  # recently stopped out or liquidity collapsed
             added.append(a)
-            prev = old.get(p.mint, {})
-            new[p.mint] = {
-                "mint": p.mint,
-                "symbol": p.symbol,
-                "pool": p.pool_address,
-                "liquidity": p.liquidity_usd,
-                "score": a.score,
-                "median_drop": st.median_drop,
-                "median_rise": st.median_rise,
-                "avg_cycle_hours": st.avg_cycle_hours,
-                "ref_high": pl.ref_high,
-                "entry": pl.entry,
-                "stop": pl.stop,
-                "tp1": pl.tp1,
-                "tp2": pl.tp2,
-                "stop_pct": pl.stop_pct,
-                "time_stop_hours": pl.time_stop_hours,
-                "reward_risk": pl.reward_risk,
-                "bt_trades": a.bt.trades if a.bt else 0,
-                "bt_return": a.bt.total_return_pct if a.bt else 0.0,
-                "bt_avg": a.bt.avg_return_pct if a.bt else 0.0,
-                "status": "holding" if p.mint in positions else (
-                    "armed" if prev.get("status") == "armed" else "waiting"),
-                "local_min": prev.get("local_min") if prev.get("status") == "armed" else None,
-                "added_at": prev.get("added_at", now),
-                "liq_baseline": prev.get("liq_baseline"),
-                "updated_at": now,
-            }
+            new[p.mint] = self.watch_item(a, old.get(p.mint, {}), positions, now,
+                                          manual=a in self._manual_results)
         # keep items that have an open position even if they dropped off the list
         for mint in positions:
             if mint not in new and mint in old:
@@ -379,6 +438,8 @@ class Scanner:
 
     def _report(self, n_pools, n_kept, results, accepted, secs, prefilter_rejected=None) -> str:
         from html import escape
+
+        from src.bot.reasons import ar_reason
         lines = [
             "🔎 <b>اكتمل المسح</b>",
             f"عملات مفحوصة: {n_pools} · اجتازت الفلاتر: {n_kept} · حُللت: {len(results)} · "
@@ -386,14 +447,15 @@ class Scanner:
         ]
         for a in accepted[:10]:
             st, bt = a.stats, a.bt
+            star = "⭐ " if a in self._manual_results else ""
             lines.append(
-                f"• <b>{escape(a.pool.symbol)}</b> تقييم {a.score:.0f} | موجات {st.n_cycles} | "
+                f"• {star}<b>{escape(a.pool.symbol)}</b> تقييم {a.score:.0f} | موجات {st.n_cycles} | "
                 f"هبوط {st.median_drop:.0%} / صعود {st.median_rise:.0%} | "
                 f"اختبار تاريخي: {bt.trades} صفقات {bt.total_return_pct:+.1f}%"
             )
         if prefilter_rejected:
             lines.append("مستبعدة في الفلترة الأولية: " + "، ".join(
-                f"{escape(k)} ×{v}" for k, v in sorted(prefilter_rejected.items(), key=lambda x: -x[1])[:6]))
+                f"{escape(ar_reason(k))} ×{v}" for k, v in sorted(prefilter_rejected.items(), key=lambda x: -x[1])[:6]))
         top_reasons: dict[str, int] = {}
         for a in results:
             for r in a.reasons[:1]:
@@ -401,5 +463,5 @@ class Scanner:
                 top_reasons[key] = top_reasons.get(key, 0) + 1
         if top_reasons:
             lines.append("رُفضت بعد التحليل: " + "، ".join(
-                f"{escape(k)} ×{v}" for k, v in sorted(top_reasons.items(), key=lambda x: -x[1])[:6]))
+                f"{escape(ar_reason(k))} ×{v}" for k, v in sorted(top_reasons.items(), key=lambda x: -x[1])[:6]))
         return "\n".join(lines)

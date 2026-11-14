@@ -108,6 +108,16 @@ class StateManager:
     async def in_cooldown(self, mint: str) -> bool:
         return bool(await self.r.exists(P + f"cooldown:{mint}"))
 
+    # ---------- coins suggested by the user (/watch) ----------
+    async def add_manual(self, mint: str):
+        await self.r.sadd(P + "manual", mint)
+
+    async def remove_manual(self, mint: str):
+        await self.r.srem(P + "manual", mint)
+
+    async def get_manual(self) -> set[str]:
+        return set(await self.r.smembers(P + "manual"))
+
     # ---------- strategy parameter overrides ----------
     async def get_param_overrides(self) -> dict:
         raw = await self.r.get(P + "params")

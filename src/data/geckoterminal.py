@@ -130,6 +130,17 @@ class GeckoClient:
         )
         return [p for p in parse_pools(data) if p.mint == mint]
 
+    async def pool_base_mint(self, pool: str) -> str | None:
+        """If `pool` is a pool/pair address, return its base token mint."""
+        try:
+            data = await self._get(f"/networks/{NETWORK}/pools/{pool}", {"include": "base_token,quote_token"})
+        except Exception:
+            return None
+        payload = {"data": [data.get("data")] if isinstance(data.get("data"), dict) else [],
+                   "included": data.get("included") or []}
+        pools = parse_pools(payload)
+        return pools[0].mint if pools else None
+
     async def best_pools(self, mints: list[str]) -> dict[str, PoolInfo]:
         """Most liquid SOL/USDC/USDT pool for each mint (30 mints per call)."""
         out: dict[str, PoolInfo] = {}

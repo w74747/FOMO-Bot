@@ -12,6 +12,7 @@ from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, filters
 
 from src.analysis.optimizer import optimize
+from src.bot.reasons import ar_reason
 from src.bot.report import build_report, strategy_closes
 from src.trading.monitor import fmt_price
 from src.trading.strategy import PARAM_NAMES, load_params
@@ -24,7 +25,10 @@ COMMANDS = [
     ("positions", "المراكز المفتوحة"),
     ("history", "آخر الصفقات"),
     ("scan", "تشغيل مسح جديد الآن"),
-    ("token", "تحليل عملة: /token <mint>"),
+    ("token", "تحليل عملة: /token <عنوان أو رابط>"),
+    ("watch", "اقتراح عملة للمراقبة: /watch <عنوان أو رابط>"),
+    ("unwatch", "إزالة عملة اقترحتها: /unwatch <عنوان>"),
+    ("mylist", "العملات التي اقترحتها"),
     ("report", "تقرير الأداء والتقدم نحو التداول الحقيقي"),
     ("collect", "جمع بيانات تاريخية لعملات إضافية"),
     ("optimize", "اختبار مئات الإعدادات على البيانات المخزنة"),
@@ -96,6 +100,7 @@ class TelegramController:
             "resume": self.cmd_resume, "closeall": self.cmd_closeall, "report": self.cmd_report,
             "collect": self.cmd_collect, "optimize": self.cmd_optimize, "apply": self.cmd_apply,
             "params": self.cmd_params, "resetparams": self.cmd_resetparams,
+            "watch": self.cmd_watch, "unwatch": self.cmd_unwatch, "mylist": self.cmd_mylist,
             "wallet": self.cmd_wallet, "live": self.cmd_live, "livetest": self.cmd_livetest, "stop": self.cmd_stop,
         }
         for name, fn in table.items():
@@ -248,24 +253,81 @@ class TelegramController:
 
     async def cmd_token(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not context.args:
-            await self._reply(update, "الاستخدام: <code>/token MINT_ADDRESS</code>")
+            await self._reply(update, "الاستخدام: <code>/token عنوان_العملة</code> أو الصق رابطها من Birdeye أو DexScreener أو pump.fun")
             return
-        mint = context.args[0].strip()
         await self._reply(update, "⏳ جارٍ التحليل…")
-        self._spawn(self._token_report(mint))
+        self._spawn(self._analyze_and_report(" ".join(context.args), add=False))
 
-    async def _token_report(self, mint: str):
+    async def cmd_watch(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not context.args:
+            await self._reply(update, "الاستخدام: <code>/watch عنوان_العملة</code> أو الصق رابطها.\n"
+                                      "يحللها البوت بنفس قواعده؛ إن قُبلت تدخل قائمة المراقبة، ويعيد فحصها في كل مسح.")
+            return
+        await self._reply(update, "⏳ جارٍ تحليل العملة المقترحة…")
+        self._spawn(self._analyze_and_report(" ".join(context.args), add=True))
+
+    async def cmd_unwatch(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        from src.analysis.scanner import extract_address
+        mint = extract_address(" ".join(context.args or []))
+        if not mint:
+            await self._reply(update, "الاستخدام: <code>/unwatch عنوان_العملة</code>")
+            return
+        await self.state.remove_manual(mint)
+        held = mint in await self.state.held_mints()
+        if not held:
+            await self.state.remove_watch_item(mint)
+        await self._reply(update, "🗑 أُزيلت من قائمتك." + (" عليها مركز مفتوح وسيُدار حتى الخروج." if held else ""))
+
+    async def cmd_mylist(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        manual = await self.state.get_manual()
+        if not manual:
+            await self._reply(update, "لم تقترح أي عملة بعد. استخدم <code>/watch عنوان_العملة</code>")
+            return
+        watch = await self.state.get_watchlist()
+        lines = ["⭐ <b>العملات التي اقترحتها</b> (يُعاد فحصها في كل مسح)"]
+        for m in manual:
+            w = watch.get(m)
+            state = f"في المراقبة: <b>{escape(w['symbol'])}</b> تقييم {w.get('score', 0):.0f}" if w else "غير مقبولة حالياً"
+            lines.append(f"• {state}\n   <code>{m}</code>")
+        await self._reply(update, "\n".join(lines))
+
+    async def _analyze_and_report(self, text: str, add: bool):
         try:
-            a = await self.scanner.analyze_mint(mint)
+            mint = await self.scanner.resolve_mint(text)
+            if not mint:
+                await self.send("لم أجد عنوان عملة صالحاً في الرسالة.")
+                return
+            a, prefilter_reason = await self.scanner.analyze_manual(mint)
         except Exception as e:
-            await self.send(f"❌ فشل التحليل: {escape(str(e))}")
+            logger.exception("manual analysis failed")
+            await self.send(f"❌ فشل التحليل: {escape(str(e))[:300]}")
             return
         if a is None:
-            await self.send("لم أجد مجمع سيولة مدعوم لهذه العملة على GeckoTerminal.")
+            await self.send(f"❌ لم أستطع تحليلها: {escape(ar_reason(prefilter_reason or 'no supported pool'))}\n<code>{mint}</code>")
             return
+        if prefilter_reason and prefilter_reason not in a.reasons:
+            a.reasons.insert(0, prefilter_reason)
+        lines = self._format_analysis(a)
+        if add:
+            await self.state.add_manual(mint)
+            if a.accepted:
+                if await self.state.in_cooldown(mint):
+                    lines.append("⏳ مقبولة لكنها في فترة تهدئة؛ ستدخل المراقبة تلقائياً بعد انتهائها.")
+                else:
+                    import time as _t
+                    held = await self.state.held_mints()
+                    prev = (await self.state.get_watchlist()).get(mint, {})
+                    await self.state.set_watch_item(mint, self.scanner.watch_item(a, prev, held, int(_t.time()), manual=True))
+                    lines.append("👀 <b>أُضيفت إلى قائمة المراقبة</b>، وسيُعاد فحصها في كل مسح.")
+            else:
+                lines.append("📌 حُفظت في قائمتك (/mylist): سيعيد البوت فحصها في كل مسح، وتدخل المراقبة إذا أصبحت مناسبة.")
+        await self.send("\n".join(lines))
+
+    def _format_analysis(self, a) -> list[str]:
         p, st, pl, bt = a.pool, a.stats, a.plan, a.bt
         lines = [f"🧪 <b>{escape(p.symbol)}</b> — {escape(p.name)}",
-                 f"السيولة {p.liquidity_usd:,.0f}$ · حجم 24س {p.volume_24h_usd:,.0f}$ · العمر {p.age_days:.0f} يوم"]
+                 f"السيولة {p.liquidity_usd:,.0f}$ · حجم 24س {p.volume_24h_usd:,.0f}$ · العمر {p.age_days:.0f} يوم",
+                 f"<code>{p.mint}</code>"]
         if st:
             lines.append(
                 f"موجات مكتملة: {st.n_cycles} · وسيط الهبوط {st.median_drop:.0%} · وسيط الصعود {st.median_rise:.0%}\n"
@@ -273,15 +335,16 @@ class TelegramController:
                 f"الاتجاه {st.trend_pct_day:+.1f}%/يوم · القيعان {st.lows_trend_pct_day:+.1f}%/يوم\n"
                 f"التقييم: <b>{a.score:.0f}</b>/100")
         if pl:
-            lines.append(f"الخطة: دخول {fmt_price(pl.entry)} · هدف1 {fmt_price(pl.tp1)} · هدف2 {fmt_price(pl.tp2)} · "
-                         f"وقف {fmt_price(pl.stop)} · R/R {pl.reward_risk:.1f} · تكلفة ذهاب وإياب ~{pl.cost_pct:.1%}")
+            lines.append(f"الخطة: دخول {fmt_price(pl.entry)} · هدف1 {fmt_price(pl.tp1)} · "
+                         f"وقف {fmt_price(pl.stop)} · R/R {pl.reward_risk:.1f} · تكلفة الجولة ~{pl.cost_pct:.1%}")
         if bt:
             lines.append(f"الاختبار التاريخي ({bt.test_days:.0f} يوم): {bt.trades} صفقات · فوز {bt.win_rate:.0%} · "
                          f"عائد {bt.total_return_pct:+.1f}% · أسوأ صفقة {bt.worst_trade_pct:+.1f}%")
         if a.top10 is not None:
-            lines.append(f"أكبر 10 ملاك: {a.top10:.0%}")
-        lines.append("✅ <b>مقبولة</b>" if a.accepted else "❌ <b>مرفوضة</b>: " + escape("، ".join(a.reasons)))
-        await self.send("\n".join(lines))
+            lines.append(f"أكبر الملاك: {a.top10:.0%}")
+        lines.append("✅ <b>مقبولة</b>" if a.accepted else
+                     "❌ <b>مرفوضة</b>: " + escape("، ".join(ar_reason(r) for r in a.reasons)))
+        return lines
 
     async def cmd_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await self.state.set_paused(True)

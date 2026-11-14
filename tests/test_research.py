@@ -141,3 +141,65 @@ async def test_report_excludes_manual_closes():
             {"pnl_usd": 0.0, "return_pct": 0.0, "expected_pct": 6.0, "closed_at": now, "exit_reason": "إغلاق يدوي"}]
     txt = await build_report(FakeDB(rows), state, settings)
     assert "1/30" in txt and "مستبعد: 2" in txt and "-1.67$" in txt
+
+
+def test_arabic_reasons_and_address_extraction():
+    from src.analysis.scanner import extract_address
+    from src.bot.reasons import ar_reason
+    assert ar_reason("only 2 complete waves") == "موجات مكتملة قليلة (2)"
+    assert ar_reason("lower lows -3.5%/day") == "قيعان متناقصة (العملة تنزف) (-3.5%/day)"
+    assert ar_reason("not enough backtest evidence (1 trades)") == "دليل تاريخي غير كافٍ (1 trades)"
+    assert ar_reason("too young") == "عمرها أقل من 7 أيام"
+    mint = "4CxjZyMNoF1p6eXHXHv1TWpS2X47CuUmLwtGe18spump"
+    assert extract_address(mint) == mint
+    assert extract_address(f"https://birdeye.so/token/{mint}?chain=solana") == mint
+    assert extract_address(f"https://pump.fun/coin/{mint}") == mint
+    assert extract_address("hello") is None
+
+
+async def test_manual_coin_is_rechecked_every_scan_and_never_capped_out(monkeypatch):
+    import fakeredis.aioredis as fr
+    from src.analysis.scanner import Scanner
+    from src.data.models import PoolInfo
+    monkeypatch.setattr(settings, "WATCHLIST_SIZE", 1)
+
+    base = {"name": "", "price": 1, "liquidity": 3e5, "fdv": 2e6, "age_days": 40, "volume_24h": 5e5,
+            "holders": 3000, "organic_score": 50, "top_holders_pct": 0.2, "mint_disabled": True,
+            "freeze_disabled": True, "is_sus": False}
+
+    class J:
+        async def top_tokens(self, *a):
+            return [{**base, "mint": m, "symbol": m} for m in ("AUTO1", "AUTO2")]
+
+        async def token_info(self, mints):
+            return [{**base, "mint": m, "symbol": m} for m in mints]
+
+    class G:
+        async def best_pools(self, mints):
+            return {m: PoolInfo("P" + m, m, m, m, "SOL", "d", 1, 3e5, 1, 1, 30, 1, 0) for m in mints}
+
+        async def ohlcv(self, *a):
+            return wave_candles()
+
+    class S:
+        async def mint_check(self, m):
+            return {"ok": True, "reasons": []}
+
+    class DB:
+        ready = False
+
+        async def save_analysis(self, *a):
+            pass
+
+        async def save_candles(self, *a):
+            pass
+
+    state = StateManager(client=fr.FakeRedis(decode_responses=True))
+    await state.add_manual("MINE")
+    sc = Scanner(G(), S(), state, DB(), settings, jupiter=J())
+    await sc.run()
+    wl = await state.get_watchlist()
+    assert "MINE" in wl and wl["MINE"]["manual"] is True     # user's coin kept despite size 1
+    assert len(wl) == 2                                       # + best automatic coin
+    a, why = await sc.analyze_manual("MINE")
+    assert a.accepted and why is None
