@@ -37,8 +37,11 @@ def summarize(rows: list[dict]) -> dict:
 
 
 async def build_report(db, state, settings, hours: float = 24) -> str:
-    day = summarize(await db.closed_positions(since_hours=hours))
-    all_rows = await db.closed_positions()
+    day_rows = await db.closed_positions(since_hours=hours)
+    every = await db.closed_positions()
+    live_rows = [r for r in every if r.get("mode") == "live"]
+    day = summarize([r for r in day_rows if (r.get("mode") or "paper") == "paper"])
+    all_rows = [r for r in every if (r.get("mode") or "paper") == "paper"]
     tot = summarize(all_rows)
     balance = await state.get_balance(settings.PAPER_START_BALANCE_USD)
     positions = await state.get_positions()
@@ -74,6 +77,13 @@ async def build_report(db, state, settings, hours: float = 24) -> str:
     else:
         lines.append(f"⬜ لا توجد صفقات مغلقة بعد (0/{MIN_TRADES}).")
 
+    if live_rows:
+        lv = summarize(live_rows)
+        pv = summarize(all_rows)
+        lines.append("")
+        lines.append(f"💰 <b>الحقيقي</b>: {lv['n']} صفقة · رابحة {lv['wins']} · صافي <b>{lv['pnl']:+.2f}$</b> · "
+                     f"متوسط {lv['avg_ret']:+.1f}% (الورقي {pv['avg_ret']:+.1f}% إن وُجد)" if pv["n"] else
+                     f"💰 <b>الحقيقي</b>: {lv['n']} صفقة · صافي <b>{lv['pnl']:+.2f}$</b>")
     lines.append("")
     lines.append(
         f"💼 الرصيد الورقي: {balance:,.2f}$ · مراكز مفتوحة: {len(positions)} · قائمة المراقبة: {len(watch)}")

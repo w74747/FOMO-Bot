@@ -45,18 +45,25 @@ class StateManager:
     async def remove_watch_item(self, mint: str):
         await self.r.hdel(P + "watchlist", mint)
 
-    # ---------- positions ----------
-    async def get_positions(self) -> dict[str, dict]:
-        return await self._hgetall_json("positions")
+    # ---------- positions (separate books: "paper" and "live") ----------
+    @staticmethod
+    def _pk(book: str) -> str:
+        return "positions" if book == "paper" else f"{book}:positions"
 
-    async def get_position(self, mint: str) -> dict | None:
-        return await self._hget_json("positions", mint)
+    async def get_positions(self, book: str = "paper") -> dict[str, dict]:
+        return await self._hgetall_json(self._pk(book))
 
-    async def save_position(self, mint: str, pos: dict):
-        await self.r.hset(P + "positions", mint, json.dumps(pos))
+    async def get_position(self, mint: str, book: str = "paper") -> dict | None:
+        return await self._hget_json(self._pk(book), mint)
 
-    async def delete_position(self, mint: str):
-        await self.r.hdel(P + "positions", mint)
+    async def save_position(self, mint: str, pos: dict, book: str = "paper"):
+        await self.r.hset(P + self._pk(book), mint, json.dumps(pos))
+
+    async def delete_position(self, mint: str, book: str = "paper"):
+        await self.r.hdel(P + self._pk(book), mint)
+
+    async def held_mints(self) -> set[str]:
+        return set(await self.get_positions("paper")) | set(await self.get_positions("live"))
 
     # ---------- paper balance & daily pnl ----------
     async def get_balance(self, default: float) -> float:
@@ -69,12 +76,16 @@ class StateManager:
     async def add_balance(self, delta: float) -> float:
         return float(await self.r.incrbyfloat(P + "paper:balance", delta))
 
-    async def get_daily_pnl(self) -> float:
-        val = await self.r.get(P + f"pnl:{_today()}")
+    @staticmethod
+    def _pnl_key(book: str) -> str:
+        return P + (f"pnl:{_today()}" if book == "paper" else f"{book}:pnl:{_today()}")
+
+    async def get_daily_pnl(self, book: str = "paper") -> float:
+        val = await self.r.get(self._pnl_key(book))
         return float(val) if val else 0.0
 
-    async def add_daily_pnl(self, delta: float):
-        key = P + f"pnl:{_today()}"
+    async def add_daily_pnl(self, delta: float, book: str = "paper"):
+        key = self._pnl_key(book)
         await self.r.incrbyfloat(key, delta)
         await self.r.expire(key, 7 * 86400)
 
@@ -84,6 +95,12 @@ class StateManager:
 
     async def set_paused(self, paused: bool):
         await self.r.set(P + "paused", "1" if paused else "0")
+
+    async def live_enabled(self) -> bool:
+        return await self.r.get(P + "live:enabled") == "1"
+
+    async def set_live_enabled(self, on: bool):
+        await self.r.set(P + "live:enabled", "1" if on else "0")
 
     async def set_cooldown(self, mint: str, hours: float):
         await self.r.set(P + f"cooldown:{mint}", "1", ex=max(1, int(hours * 3600)))

@@ -14,17 +14,20 @@ class RiskBlocked(Exception):
     pass
 
 
-async def check_risk(state, s, mint: str) -> str | None:
+async def check_risk(state, s, mint: str, book: str = "paper",
+                     max_open: int | None = None, daily_limit: float | None = None) -> str | None:
     """Return a reason string if a new position is NOT allowed, else None."""
+    max_open = s.MAX_OPEN_POSITIONS if max_open is None else max_open
+    daily_limit = s.DAILY_LOSS_LIMIT_USD if daily_limit is None else daily_limit
     if await state.is_paused():
         return "البوت متوقف مؤقتاً (/resume)"
-    positions = await state.get_positions()
+    positions = await state.get_positions(book)
     if mint in positions:
         return "يوجد مركز مفتوح على هذه العملة"
-    if len(positions) >= s.MAX_OPEN_POSITIONS:
-        return f"الحد الأقصى للمراكز المفتوحة ({s.MAX_OPEN_POSITIONS})"
-    if await state.get_daily_pnl() <= -abs(s.DAILY_LOSS_LIMIT_USD):
-        return f"تم بلوغ حد الخسارة اليومي ({s.DAILY_LOSS_LIMIT_USD}$)"
+    if len(positions) >= max_open:
+        return f"الحد الأقصى للمراكز المفتوحة ({max_open})"
+    if await state.get_daily_pnl(book) <= -abs(daily_limit):
+        return f"تم بلوغ حد الخسارة اليومي ({daily_limit}$)"
     if await state.in_cooldown(mint):
         return "العملة في فترة تهدئة بعد وقف خسارة"
     return None
@@ -32,6 +35,10 @@ async def check_risk(state, s, mint: str) -> str | None:
 
 class PaperBroker:
     mode = "paper"
+    book = "paper"
+
+    async def enabled(self) -> bool:
+        return True
 
     def __init__(self, state, db, settings):
         self.state = state

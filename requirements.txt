@@ -5,3 +5,4 @@ asyncpg==0.29.0
 pydantic==2.8.2
 pydantic-settings==2.4.0
 loguru==0.7.2
+solders==0.23.0

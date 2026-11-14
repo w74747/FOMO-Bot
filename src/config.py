@@ -28,7 +28,15 @@ class Settings(BaseSettings):
 
     # --- Execution (live mode is NOT implemented yet; kept for the next phase) ---
     WALLET_PRIVATE_KEY: str | None = None
-    TRADING_MODE: Literal["paper", "live"] = "paper"
+    TRADING_MODE: Literal["paper", "live"] = "paper"   # informational; live is switched with /live on
+
+    # --- Live trading safety (runs side by side with paper) ---
+    LIVE_POSITION_USD: float = 10.0
+    LIVE_MAX_OPEN_POSITIONS: int = 2
+    LIVE_DAILY_LOSS_USD: float = 15.0
+    LIVE_SOL_RESERVE: float = 0.05           # never spend below this (fees + temporary rent)
+    LIVE_EXIT_SLIPPAGE_BPS: int = 1000       # stops must get out even in a fast market
+    LIVE_MIN_PAPER_TRADES: int = 15          # gate before /live on (override: /live force)
 
     # --- Optional AI ---
     XAI_API_KEY: str | None = None

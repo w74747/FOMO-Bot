@@ -333,7 +333,7 @@ class Scanner:
     async def _update_watchlist(self, accepted: list[Analysis]) -> list[Analysis]:
         """Write the watchlist; returns the analyses that were actually added."""
         old = await self.state.get_watchlist()
-        positions = await self.state.get_positions()
+        positions = await self.state.held_mints()   # paper + live
         new: dict[str, dict] = {}
         added: list[Analysis] = []
         now = int(time.time())

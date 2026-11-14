@@ -31,6 +31,10 @@ COMMANDS = [
     ("apply", "تطبيق إعداد من نتائج /optimize: /apply 1"),
     ("params", "الإعدادات الحالية للاستراتيجية"),
     ("resetparams", "العودة للإعدادات الافتراضية"),
+    ("wallet", "المحفظة الحقيقية والرصيد"),
+    ("live", "تشغيل/إيقاف التداول الحقيقي: /live on | off"),
+    ("livetest", "اختبار جولة حقيقية صغيرة (2$)"),
+    ("stop", "طوارئ: بيع كل المراكز الحقيقية وإيقاف الحقيقي"),
     ("pause", "إيقاف فتح صفقات جديدة"),
     ("resume", "استئناف فتح الصفقات"),
     ("closeall", "إغلاق كل المراكز"),
@@ -44,13 +48,14 @@ class TelegramController:
         self.s = settings
         self.app = Application.builder().token(token).build()
         # set later by main.py
-        self.state = self.db = self.scanner = self.monitor = None
+        self.state = self.db = self.scanner = self.monitor = self.live = None
         self._bg: set[asyncio.Task] = set()
         self._busy: set[str] = set()
         self._register()
 
-    def bind(self, state, db, scanner, monitor):
+    def bind(self, state, db, scanner, monitor, live=None):
         self.state, self.db, self.scanner, self.monitor = state, db, scanner, monitor
+        self.live = live
 
     # ------------------------------------------------------------ lifecycle
     async def start(self):
@@ -91,6 +96,7 @@ class TelegramController:
             "resume": self.cmd_resume, "closeall": self.cmd_closeall, "report": self.cmd_report,
             "collect": self.cmd_collect, "optimize": self.cmd_optimize, "apply": self.cmd_apply,
             "params": self.cmd_params, "resetparams": self.cmd_resetparams,
+            "wallet": self.cmd_wallet, "live": self.cmd_live, "livetest": self.cmd_livetest, "stop": self.cmd_stop,
         }
         for name, fn in table.items():
             self.app.add_handler(CommandHandler(name, fn, filters=admin))
@@ -148,8 +154,14 @@ class TelegramController:
         if summary.get("closes"):
             lines.append(f"إجمالي الصفقات المغلقة: {summary['closes']} · رابحة: {summary['wins']} · "
                          f"صافي: {float(summary['total']):+.2f}$")
-        if self.s.TRADING_MODE == "live":
-            lines.append("⚠️ الوضع الحقيقي لم يُفعّل بعد في هذا الإصدار؛ التنفيذ ورقي.")
+        if self.live:
+            on = await self.state.live_enabled()
+            lp = await self.state.get_positions("live")
+            lpnl = await self.state.get_daily_pnl("live")
+            lines.append(f"💰 الحقيقي: <b>{'يعمل' if on else 'متوقف'}</b> · مراكز {len(lp)}/{self.s.LIVE_MAX_OPEN_POSITIONS} · "
+                         f"اليوم {lpnl:+.2f}$ (الحد −{self.s.LIVE_DAILY_LOSS_USD:.0f}$) · صفقة {self.s.LIVE_POSITION_USD:.0f}$")
+        else:
+            lines.append("💰 الحقيقي: غير مهيأ (يحتاج WALLET_PRIVATE_KEY وSOLANA_RPC_URL وJUPITER_API_KEY)")
         return "\n".join(lines)
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -173,19 +185,20 @@ class TelegramController:
         await self._reply(update, "\n".join(lines))
 
     async def cmd_positions(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        positions = await self.state.get_positions()
-        if not positions:
+        books = [("paper", "📝 ورقي"), ("live", "💰 حقيقي")]
+        allpos = [(label, mint, p) for book, label in books for mint, p in (await self.state.get_positions(book)).items()]
+        if not allpos:
             await self._reply(update, "لا توجد مراكز مفتوحة.")
             return
-        prices = await self.monitor.jupiter.prices(list(positions))
+        prices = await self.monitor.jupiter.prices(list({m for _, m, _ in allpos}))
         lines = ["📂 <b>المراكز المفتوحة</b>"]
-        for mint, p in positions.items():
+        for label, mint, p in allpos:
             cur = prices.get(mint, {}).get("price")
             unreal = (cur / p["entry_price"] - 1) if cur else None
             hours_left = max(0, (p["time_stop_at"] - time.time()) / 3600)
             now_txt = f" الآن {fmt_price(cur)} ({unreal:+.1%})" if cur else ""
             lines.append(
-                f"• <b>{escape(p['symbol'])}</b> {p['cost_usd']:.2f}$ دخول {fmt_price(p['entry_price'])}{now_txt}\n"
+                f"• {label} <b>{escape(p['symbol'])}</b> {p['cost_usd']:.2f}$ دخول {fmt_price(p['entry_price'])}{now_txt}\n"
                 f"   هدف1 {fmt_price(p['tp1'])}{' ✅' if p['tp1_hit'] else ''} · "
                 f"{'وقف متحرك' if p['tp1_hit'] else 'وقف'} {fmt_price(p['stop'])} · "
                 f"أعلى سعر {fmt_price(p.get('peak', p['entry_price']))} · "
@@ -390,3 +403,77 @@ class TelegramController:
     async def cmd_resetparams(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await self.state.set_param_overrides(None)
         await self._reply(update, "↩️ عادت الإعدادات إلى القيم الافتراضية.")
+
+    # ------------------------------------------------------------ live trading
+    async def _need_live(self, update) -> bool:
+        if self.live:
+            return True
+        await self._reply(update, "التداول الحقيقي غير مهيأ: يحتاج WALLET_PRIVATE_KEY وSOLANA_RPC_URL وJUPITER_API_KEY في Railway.")
+        return False
+
+    async def cmd_wallet(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._need_live(update):
+            return
+        lam = await self.live.wallet.sol_balance()
+        sol = lam / 1e9
+        on = await self.state.live_enabled()
+        await self._reply(update, (
+            f"💼 <b>المحفظة</b>\n<code>{self.live.wallet.address}</code>\n"
+            f"الرصيد: <b>{sol:.5f} SOL</b> ≈ {sol * self.live.sol_usd:,.2f}$\n"
+            f"المتاح للتداول بعد الاحتياطي ({self.s.LIVE_SOL_RESERVE} SOL): {max(0, sol - self.s.LIVE_SOL_RESERVE):.4f} SOL\n"
+            f"التداول الحقيقي: <b>{'يعمل' if on else 'متوقف'}</b>"))
+
+    async def cmd_live(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._need_live(update):
+            return
+        arg = (context.args[0].lower() if context.args else "")
+        if arg == "off":
+            await self.state.set_live_enabled(False)
+            await self._reply(update, "⏹ أُوقف فتح صفقات حقيقية جديدة. المراكز الحقيقية المفتوحة تُدار حتى الخروج (أو /stop لبيعها الآن).")
+            return
+        if arg not in ("on", "force"):
+            await self._reply(update, "الاستخدام: <code>/live on</code> أو <code>/live off</code>")
+            return
+        closed = await self.db.closed_positions()
+        paper = [r for r in closed if (r.get("mode") or "paper") == "paper"]
+        pnl = sum(r["pnl_usd"] or 0 for r in paper)
+        ok = len(paper) >= self.s.LIVE_MIN_PAPER_TRADES and pnl > 0
+        if not ok and arg != "force":
+            await self._reply(update, (
+                f"🔒 الشرط المتفق عليه لم يتحقق بعد: {len(paper)}/{self.s.LIVE_MIN_PAPER_TRADES} صفقة ورقية مغلقة، "
+                f"صافي {pnl:+.2f}$ (يجب أن يكون موجباً).\n"
+                "إذا كنت تريد التشغيل رغم ذلك وتقبل المخاطرة: <code>/live force</code>"))
+            return
+        await self.state.set_live_enabled(True)
+        await self._reply(update, (
+            f"💰 <b>التداول الحقيقي يعمل</b>{' (تجاوز الشرط بقرارك)' if not ok else ''}\n"
+            f"صفقة {self.s.LIVE_POSITION_USD:.0f}$ · حتى {self.s.LIVE_MAX_OPEN_POSITIONS} مراكز · "
+            f"حد خسارة يومي {self.s.LIVE_DAILY_LOSS_USD:.0f}$ · احتياطي {self.s.LIVE_SOL_RESERVE} SOL\n"
+            "الورقي مستمر بالتوازي للمقارنة. للطوارئ: /stop"))
+
+    async def cmd_livetest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._need_live(update):
+            return
+        if not self._guard("livetest"):
+            await self._reply(update, "⏳ الاختبار يعمل بالفعل.")
+            return
+        await self._reply(update, "🧪 اختبار حقيقي: شراء USDC بـ 2$ من SOL ثم بيعه بالكامل وإغلاق الحساب… (حوالي دقيقة)")
+
+        async def job():
+            try:
+                await self.send("✅ <b>نجح الاختبار الحقيقي</b>\n" + escape(await self.live.self_test(2.0)))
+            except Exception as e:
+                logger.exception("live self-test failed")
+                await self.send(f"❌ فشل الاختبار الحقيقي: {escape(str(e))[:500]}")
+            finally:
+                self._busy.discard("livetest")
+        self._spawn(job())
+
+    async def cmd_stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._need_live(update):
+            return
+        await self.state.set_live_enabled(False)
+        await self._reply(update, "🛑 أُوقف التداول الحقيقي. جارٍ بيع كل المراكز الحقيقية…")
+        n = await self.monitor.close_all("إيقاف طوارئ", book="live")
+        left = await self.state.get_positions("live")
+        await self._reply(update, f"بيع {n} مركز." + (f" ⚠️ بقي {len(left)} لم يُبع، سأعيد المحاولة تلقائياً." if left else ""))

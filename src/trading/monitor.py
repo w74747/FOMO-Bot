@@ -21,10 +21,14 @@ def fmt_price(p: float) -> str:
 
 class Monitor:
     def __init__(self, state, jupiter, broker, settings,
-                 notify: Callable[[str], Awaitable[None]]):
+                 notify: Callable[[str], Awaitable[None]], live_broker=None):
         self.state = state
         self.jupiter = jupiter
-        self.broker = broker
+        self.broker = broker                      # paper (always on)
+        self.brokers = {"paper": broker}
+        if live_broker is not None:
+            self.brokers["live"] = live_broker    # real money, only when /live on
+        self._err_at: dict[str, float] = {}
         self.s = settings
         self.params = StrategyParams.from_settings(settings)
         self.notify = notify
@@ -42,8 +46,9 @@ class Monitor:
     async def tick(self):
         self.params = await load_params(self.state, self.s)
         watch = await self.state.get_watchlist()
-        positions = await self.state.get_positions()
-        mints = list(set(watch) | set(positions))
+        books = {name: await self.state.get_positions(name) for name in self.brokers}
+        held = set().union(*books.values()) if books else set()
+        mints = list(set(watch) | held)
         if not mints:
             self.last_tick = time.time()
             return
@@ -51,13 +56,15 @@ class Monitor:
         sol = prices.get(SOL_MINT, {}).get("price")
         if sol:
             await self.state.set_meta("sol_usd", str(sol))
-            self.broker.sol_usd = sol
-        for mint, pos in positions.items():
-            info = prices.get(mint)
-            if info:
-                await self._manage(pos, info, watch.get(mint))
+            for b in self.brokers.values():
+                b.sol_usd = sol
+        for name, positions in books.items():
+            for mint, pos in positions.items():
+                info = prices.get(mint)
+                if info:
+                    await self._manage(pos, info, watch.get(mint), self.brokers[name])
         for mint, item in watch.items():
-            if mint in positions:
+            if mint in held:
                 continue
             info = prices.get(mint)
             if info:
@@ -126,35 +133,49 @@ class Monitor:
 
     async def _enter(self, item: dict, price: float, liq: float | None):
         sym = escape(item.get("symbol", "?"))
-        try:
-            pos = await self.broker.buy(item, price, liq, self.params)
-        except RiskBlocked as e:
+        opened, blocked = [], {}
+        for name, broker in self.brokers.items():
+            if not await broker.enabled():
+                continue
+            try:
+                opened.append(await broker.buy(item, price, liq, self.params))
+            except RiskBlocked as e:
+                blocked[name] = str(e)
+            except Exception as e:  # never let a live error stop the paper book
+                logger.exception(f"{name} buy failed for {sym}")
+                blocked[name] = f"خطأ: {e}"
+        if not opened:
             item.update(status="waiting", local_min=None)
             await self.state.set_watch_item(item["mint"], item)
-            await self.notify(f"⛔ إشارة شراء <b>{sym}</b> أُلغيت: {escape(str(e))}")
+            await self.notify(f"⛔ إشارة شراء <b>{sym}</b> أُلغيت: {escape(blocked.get('paper', ''))}")
             return
         item.update(status="holding", local_min=None)
         await self.state.set_watch_item(item["mint"], item)
-        mode = "📝 ورقي" if pos.get("mode") == "paper" else "💰 حقيقي"
-        await self.notify(
-            f"🟢 <b>شراء {sym}</b> ({mode})\n"
-            f"المبلغ: {pos['cost_usd']:.2f}$ · السعر: {fmt_price(pos['entry_price'])}\n"
-            f"الهدف 1 (بيع النصف): {fmt_price(pos['tp1'])} · بعده وقف متحرك {pos.get('trail_pct', 0.08):.0%} "
-            f"يُشدَّد إلى النصف فوق {fmt_price(pos['tp2'])}\n"
-            f"الوقف: {fmt_price(pos['stop'])} · وقف زمني بعد {item.get('time_stop_hours', 24):.0f} ساعة")
+        for pos in opened:
+            mode = "📝 ورقي" if pos.get("mode") == "paper" else "💰 <b>حقيقي</b>"
+            await self.notify(
+                f"🟢 <b>شراء {sym}</b> ({mode})\n"
+                f"المبلغ: {pos['cost_usd']:.2f}$ · السعر: {fmt_price(pos['entry_price'])}\n"
+                f"الهدف 1 (بيع النصف): {fmt_price(pos['tp1'])} · بعده وقف متحرك {pos.get('trail_pct', 0.08):.0%} "
+                f"يُشدَّد إلى النصف فوق {fmt_price(pos['tp2'])}\n"
+                f"الوقف: {fmt_price(pos['stop'])} · وقف زمني بعد {item.get('time_stop_hours', 24):.0f} ساعة")
+        if "live" in blocked and await self.brokers["live"].enabled():
+            await self.notify(f"ℹ️ الصفقة الحقيقية على <b>{sym}</b> لم تُفتح: {escape(blocked['live'])}")
 
     # ------------------------------------------------------------ exits
-    async def _manage(self, pos: dict, info: dict, item: dict | None):
+    async def _manage(self, pos: dict, info: dict, item: dict | None, broker=None):
         """Before target 1: fixed stop + time stop. At target 1: sell half, stop to breakeven.
         After that the rest rides with a trailing stop (no fixed second target), so a weak
         bounce still locks in profit and a strong one is not cut short."""
+        broker = broker or self.broker
+        book = broker.book
         price, liq = info["price"], info.get("liquidity")
         mint = pos["mint"]
         now = time.time()
         dirty = False
 
         if liq and pos.get("liquidity_at_entry") and liq < pos["liquidity_at_entry"] * (1 - self.s.LIQUIDITY_DROP_EXIT_PCT):
-            await self._exit(mint, 1.0, price, "سحب سيولة", liq, item, cooldown=True)
+            await self._exit(mint, 1.0, price, "سحب سيولة", liq, item, broker, cooldown=True)
             await self.state.set_cooldown(mint, self.s.LIQUIDITY_BAN_HOURS)
             await self.state.remove_watch_item(mint)
             return
@@ -176,40 +197,55 @@ class Monitor:
                 reason, cooldown = "وقف متحرك", False
             else:
                 reason, cooldown = "وقف عند نقطة الدخول", False
-            await self._exit(mint, 1.0, price, reason, liq, item, cooldown=cooldown)
+            await self._exit(mint, 1.0, price, reason, liq, item, broker, cooldown=cooldown)
             return
         if not pos["tp1_hit"] and price >= pos["tp1"]:
-            await self.state.save_position(mint, pos)
-            p, _, closed = await self._exit(mint, 0.5, price, "الهدف 1", liq, item)
+            await self.state.save_position(mint, pos, book)
+            res = await self._exit(mint, 0.5, price, "الهدف 1", liq, item, broker)
+            if res is None:
+                return
+            p, _, closed = res
             if not closed:
                 p["tp1_hit"] = True
                 p["peak"] = max(p.get("peak", price), price)
                 p["stop"] = trailing_stop(max(p["stop"], p["entry_price"]), p["entry_price"], p["peak"],
                                           p["tp2"], p.get("trail_pct", 0.08))
-                await self.state.save_position(mint, p)
+                await self.state.save_position(mint, p, book)
                 await self.notify(
                     f"🔒 <b>{escape(p.get('symbol', '?'))}</b>: الباقي يتبع السعر بوقف متحرك "
                     f"{p.get('trail_pct', 0.08):.0%} تحت أعلى سعر (لا يقل عن سعر الدخول). الوقف الآن {fmt_price(p['stop'])}")
             return
         if not pos["tp1_hit"] and now >= pos["time_stop_at"]:
-            await self._exit(mint, 1.0, price, "وقف زمني", liq, item)
+            await self._exit(mint, 1.0, price, "وقف زمني", liq, item, broker)
             return
         if dirty:
-            await self.state.save_position(mint, pos)
+            await self.state.save_position(mint, pos, book)
 
-    async def _exit(self, mint, fraction, price, reason, liq, item, cooldown=False):
-        pos, pnl, closed = await self.broker.sell(mint, fraction, price, reason, liq)
+    async def _exit(self, mint, fraction, price, reason, liq, item, broker=None, cooldown=False):
+        broker = broker or self.broker
+        try:
+            pos, pnl, closed = await broker.sell(mint, fraction, price, reason, liq)
+        except Exception as e:
+            # live sells can fail (slippage, network); keep the position and retry next tick
+            logger.exception(f"{broker.book} sell failed for {mint}")
+            if time.time() - self._err_at.get(mint, 0) > 300:
+                self._err_at[mint] = time.time()
+                await self.notify(f"⚠️ فشل البيع ({broker.book}) لـ {escape(mint[:8])}…: {escape(str(e))[:300]}. سأعيد المحاولة.")
+            return None
         if closed:
-            await self.broker.record_close(pos, reason)
+            await broker.record_close(pos, reason)
         sym = escape(pos.get("symbol", "?"))
         icon = "✅" if pnl >= 0 else "🔻"
-        msg = f"{icon} <b>بيع {sym}</b> ({escape(reason)}) عند {fmt_price(price)} · ربح/خسارة: {pnl:+.2f}$"
+        tag = "" if broker.book == "paper" else " 💰 <b>حقيقي</b>"
+        msg = f"{icon} <b>بيع {sym}</b>{tag} ({escape(reason)}) عند {fmt_price(price)} · ربح/خسارة: {pnl:+.2f}$"
         if closed:
             msg += f"\nأُغلق المركز. الإجمالي: {pos['realized_usd']:+.2f}$"
+            still_held = mint in await self.state.held_mints()
             if cooldown:
                 await self.state.set_cooldown(mint, self.s.STOP_COOLDOWN_HOURS)
-                await self.state.remove_watch_item(mint)
-            elif item:
+                if not still_held:
+                    await self.state.remove_watch_item(mint)
+            elif item and not still_held:
                 # start a fresh cycle from the current price
                 lv = levels(price, item["median_drop"], item["median_rise"], self.params)
                 item.update(ref_high=price, entry=lv["entry"], stop=lv["stop"], tp1=lv["tp1"], tp2=lv["tp2"],
@@ -218,17 +254,19 @@ class Monitor:
         await self.notify(msg)
         return pos, pnl, closed
 
-    async def close_all(self, reason: str = "إغلاق يدوي") -> int:
-        positions = await self.state.get_positions()
-        if not positions:
-            return 0
-        prices = await self.jupiter.prices(list(positions))
+    async def close_all(self, reason: str = "إغلاق يدوي", book: str | None = None) -> int:
         n = 0
-        for mint, pos in positions.items():
-            info = prices.get(mint)
-            if not info:
+        for name, broker in self.brokers.items():
+            if book and name != book:
                 continue
+            positions = await self.state.get_positions(name)
+            if not positions:
+                continue
+            prices = await self.jupiter.prices(list(positions))
             watch = await self.state.get_watchlist()
-            await self._exit(mint, 1.0, info["price"], reason, info.get("liquidity"), watch.get(mint))
-            n += 1
+            for mint in positions:
+                price = prices.get(mint, {}).get("price") or positions[mint]["entry_price"]
+                if await self._exit(mint, 1.0, price, reason, prices.get(mint, {}).get("liquidity"),
+                                    watch.get(mint), broker) is not None:
+                    n += 1
         return n

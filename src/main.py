@@ -18,6 +18,8 @@ from src.data.http import Http
 from src.data.jupiter import JupiterClient
 from src.data.safety import SafetyChecker
 from src.trading.broker import PaperBroker
+from src.trading.live import LiveBroker
+from src.trading.wallet import SolanaWallet
 from src.trading.monitor import Monitor
 
 logger.remove()
@@ -85,9 +87,17 @@ async def main():
     jupiter = JupiterClient(http, settings.JUPITER_API_KEY)
     safety = SafetyChecker(http, settings.SOLANA_RPC_URL, settings.BIRDEYE_API_KEY)
     broker = PaperBroker(state, db, settings)
+    live = None
+    if settings.WALLET_PRIVATE_KEY and settings.SOLANA_RPC_URL and settings.JUPITER_API_KEY:
+        try:
+            wallet = SolanaWallet(http, settings.SOLANA_RPC_URL, settings.WALLET_PRIVATE_KEY)
+            live = LiveBroker(state, db, settings, http, wallet, settings.JUPITER_API_KEY)
+            logger.info(f"Live broker ready for wallet {wallet.address} (enabled={await state.live_enabled()})")
+        except Exception as e:
+            logger.error(f"Live broker disabled: could not load wallet ({type(e).__name__})")
     scanner = Scanner(gecko, safety, state, db, settings, notify=tg.send, jupiter=jupiter)
-    monitor = Monitor(state, jupiter, broker, settings, notify=tg.send)
-    tg.bind(state, db, scanner, monitor)
+    monitor = Monitor(state, jupiter, broker, settings, notify=tg.send, live_broker=live)
+    tg.bind(state, db, scanner, monitor, live)
 
     runner = await start_health_server(monitor)
     await tg.start()
