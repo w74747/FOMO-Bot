@@ -1,77 +1,244 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+"""Telegram control panel. Only ALLOWED_ADMIN_CHAT_ID can use it."""
+import asyncio
+import time
+from html import escape
+
 from loguru import logger
-from src.config import settings
-from src.core.state import StateManager
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ParseMode
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, filters
+
+from src.trading.monitor import fmt_price
+
+MAX_LEN = 4000
+
+COMMANDS = [
+    ("status", "حالة البوت والرصيد"),
+    ("watchlist", "العملات المرشحة ومستويات الدخول"),
+    ("positions", "المراكز المفتوحة"),
+    ("history", "آخر الصفقات"),
+    ("scan", "تشغيل مسح جديد الآن"),
+    ("token", "تحليل عملة: /token <mint>"),
+    ("pause", "إيقاف فتح صفقات جديدة"),
+    ("resume", "استئناف فتح الصفقات"),
+    ("closeall", "إغلاق كل المراكز"),
+    ("help", "قائمة الأوامر"),
+]
+
 
 class TelegramController:
-    def __init__(self, state: StateManager):
-        self.state = state
-        self.app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
-        self._register_handlers()
+    def __init__(self, token: str, admin_chat_id: int, settings):
+        self.admin = admin_chat_id
+        self.s = settings
+        self.app = Application.builder().token(token).build()
+        # set later by main.py
+        self.state = self.db = self.scanner = self.monitor = None
+        self._bg: set[asyncio.Task] = set()
+        self._register()
 
-    def _register_handlers(self):
-        """تسجيل أوامر البوت والأزرار التفاعلية"""
-        self.app.add_handler(CommandHandler("start", self.cmd_start))
-        self.app.add_handler(CommandHandler("status", self.cmd_status))
-        self.app.add_handler(CallbackQueryHandler(self.handle_buttons))
+    def bind(self, state, db, scanner, monitor):
+        self.state, self.db, self.scanner, self.monitor = state, db, scanner, monitor
+
+    # ------------------------------------------------------------ lifecycle
+    async def start(self):
+        await self.app.initialize()
+        await self.app.bot.delete_webhook(drop_pending_updates=True)
+        try:
+            await self.app.bot.set_my_commands([BotCommand(c, d) for c, d in COMMANDS])
+        except Exception as e:
+            logger.warning(f"set_my_commands failed: {e}")
+        await self.app.start()
+        await self.app.updater.start_polling(drop_pending_updates=True)
+        logger.info("Telegram polling started.")
+
+    async def stop(self):
+        try:
+            await self.app.updater.stop()
+            await self.app.stop()
+            await self.app.shutdown()
+        except Exception as e:
+            logger.warning(f"telegram shutdown: {e}")
+
+    async def send(self, text: str):
+        for i in range(0, len(text), MAX_LEN):
+            chunk = text[i:i + MAX_LEN]
+            try:
+                await self.app.bot.send_message(self.admin, chunk, parse_mode=ParseMode.HTML,
+                                                disable_web_page_preview=True)
+            except Exception as e:
+                logger.error(f"Telegram send failed: {e}")
+
+    # ------------------------------------------------------------ handlers
+    def _register(self):
+        admin = filters.Chat(chat_id=self.admin)
+        table = {
+            "start": self.cmd_start, "help": self.cmd_start, "status": self.cmd_status,
+            "watchlist": self.cmd_watchlist, "positions": self.cmd_positions, "history": self.cmd_history,
+            "scan": self.cmd_scan, "token": self.cmd_token, "pause": self.cmd_pause,
+            "resume": self.cmd_resume, "closeall": self.cmd_closeall,
+        }
+        for name, fn in table.items():
+            self.app.add_handler(CommandHandler(name, fn, filters=admin))
+        self.app.add_handler(CallbackQueryHandler(self.on_button))
+
+    def _spawn(self, coro):
+        t = asyncio.create_task(coro)
+        self._bg.add(t)
+        t.add_done_callback(self._bg.discard)
+
+    async def _reply(self, update: Update, text: str, markup=None):
+        msg = update.effective_message
+        for i in range(0, len(text), MAX_LEN):
+            await msg.reply_text(text[i:i + MAX_LEN], parse_mode=ParseMode.HTML,
+                                 reply_markup=markup if i == 0 else None, disable_web_page_preview=True)
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """الرد على أمر البدء"""
-        if update.effective_chat.id != settings.ALLOWED_ADMIN_CHAT_ID:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 الحالة", callback_data="status"),
+             InlineKeyboardButton("👀 المراقبة", callback_data="watchlist")],
+            [InlineKeyboardButton("📂 المراكز", callback_data="positions"),
+             InlineKeyboardButton("🔎 مسح الآن", callback_data="scan")],
+        ])
+        cmds = "\n".join(f"/{c} — {escape(d)}" for c, d in COMMANDS)
+        await self._reply(update, f"🌊 <b>Wave Bot</b> — وضع: <b>{self.s.TRADING_MODE}</b>\n\n{cmds}", kb)
+
+    async def on_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        q = update.callback_query
+        if not update.effective_chat or update.effective_chat.id != self.admin:
+            await q.answer()
             return
+        await q.answer()
+        handler = {"status": self.cmd_status, "watchlist": self.cmd_watchlist,
+                   "positions": self.cmd_positions, "scan": self.cmd_scan}.get(q.data)
+        if handler:
+            await handler(update, context)
 
-        keyboard = [
-            [InlineKeyboardButton("📊 عرض التاجر الحالي", callback_data="view_current")],
-            [InlineKeyboardButton("⚙️ بوت التنفيذ (Dawn)", url="https://t.me/DawnTradeBot")]
+    async def status_text(self) -> str:
+        bal = await self.state.get_balance(self.s.PAPER_START_BALANCE_USD)
+        pnl = await self.state.get_daily_pnl()
+        positions = await self.state.get_positions()
+        watch = await self.state.get_watchlist()
+        paused = await self.state.is_paused()
+        last_scan = await self.state.get_meta("last_scan")
+        ago = f"منذ {(time.time() - int(last_scan)) / 60:.0f} دقيقة" if last_scan else "لم يتم بعد"
+        armed = sum(1 for w in watch.values() if w.get("status") == "armed")
+        tick_age = time.time() - self.monitor.last_tick if self.monitor and self.monitor.last_tick else None
+        summary = await self.db.pnl_summary() if self.db else {}
+        lines = [
+            f"📊 <b>الحالة</b> — وضع <b>{self.s.TRADING_MODE}</b>{' ⏸ متوقف' if paused else ''}",
+            f"الرصيد الورقي: <b>{bal:,.2f}$</b> · ربح/خسارة اليوم: <b>{pnl:+.2f}$</b> (الحد −{self.s.DAILY_LOSS_LIMIT_USD:.0f}$)",
+            f"المراكز المفتوحة: {len(positions)}/{self.s.MAX_OPEN_POSITIONS} · قائمة المراقبة: {len(watch)} (جاهزة للشراء: {armed})",
+            f"آخر مسح: {ago} · مراقب الأسعار: {'يعمل' if tick_age is not None and tick_age < 120 else 'متأخر/لم يبدأ'}",
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        await update.message.reply_text(
-            "🚀 **محرك المراقبة السحابي FOMO Engine يعمل بنجاح!**\n\n"
-            "النظام يراقب متصدري التداول ويرسل تنبيهات فورية عند أي تغيير.",
-            reply_markup=reply_markup,
-            parse_mode="Markdown"
-        )
+        if summary.get("closes"):
+            lines.append(f"إجمالي الصفقات المغلقة: {summary['closes']} · رابحة: {summary['wins']} · "
+                         f"صافي: {float(summary['total']):+.2f}$")
+        if self.s.TRADING_MODE == "live":
+            lines.append("⚠️ الوضع الحقيقي لم يُفعّل بعد في هذا الإصدار؛ التنفيذ ورقي.")
+        return "\n".join(lines)
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """التحقق من حالة التاجر النشط"""
-        if update.effective_chat.id != settings.ALLOWED_ADMIN_CHAT_ID:
+        await self._reply(update, await self.status_text())
+
+    async def cmd_watchlist(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        watch = await self.state.get_watchlist()
+        if not watch:
+            await self._reply(update, "قائمة المراقبة فارغة. استخدم /scan لتشغيل مسح.")
             return
-
-        current = await self.state.get_active_trader()
-        if current:
-            text = (
-                f"👤 **التاجر المتابع حالياً:** `{current.get('handle', 'غير محدد')}`\n"
-                f"💰 **الأرباح:** +${current.get('realized_pnl', 0):,.2f}\n"
-                f"📈 **نسبة الفوز:** {current.get('win_rate', 0)}%"
+        icons = {"waiting": "⏳", "armed": "🎯", "holding": "📂"}
+        lines = ["👀 <b>قائمة المراقبة</b>"]
+        for w in sorted(watch.values(), key=lambda x: -x.get("score", 0)):
+            lines.append(
+                f"{icons.get(w.get('status'), '•')} <b>{escape(w['symbol'])}</b> تقييم {w.get('score', 0):.0f} · "
+                f"هبوط {w['median_drop']:.0%} / صعود {w['median_rise']:.0%}\n"
+                f"   قمة {fmt_price(w['ref_high'])} → دخول {fmt_price(w['entry'])} · وقف {fmt_price(w['stop'])} · "
+                f"R/R {w.get('reward_risk', 0):.1f} · اختبار {w.get('bt_trades', 0)} صفقات {w.get('bt_return', 0):+.0f}%\n"
+                f"   <code>{w['mint']}</code>"
             )
-        else:
-            text = "ℹ️ لا يوجد تاجر مسجل في الذاكرة حالياً."
+        await self._reply(update, "\n".join(lines))
 
-        await update.message.reply_text(text, parse_mode="Markdown")
+    async def cmd_positions(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        positions = await self.state.get_positions()
+        if not positions:
+            await self._reply(update, "لا توجد مراكز مفتوحة.")
+            return
+        prices = await self.monitor.jupiter.prices(list(positions))
+        lines = ["📂 <b>المراكز المفتوحة</b>"]
+        for mint, p in positions.items():
+            cur = prices.get(mint, {}).get("price")
+            unreal = (cur / p["entry_price"] - 1) if cur else None
+            hours_left = max(0, (p["time_stop_at"] - time.time()) / 3600)
+            now_txt = f" الآن {fmt_price(cur)} ({unreal:+.1%})" if cur else ""
+            lines.append(
+                f"• <b>{escape(p['symbol'])}</b> {p['cost_usd']:.2f}$ دخول {fmt_price(p['entry_price'])}{now_txt}\n"
+                f"   هدف1 {fmt_price(p['tp1'])}{' ✅' if p['tp1_hit'] else ''} · هدف2 {fmt_price(p['tp2'])} · "
+                          f"وقف {fmt_price(p['stop'])} · متبقٍ {hours_left:.0f} س · محقق {p['realized_usd']:+.2f}$")
+        await self._reply(update, "\n".join(lines))
 
-    async def handle_buttons(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """معالجة النقر على الأزرار"""
-        query = update.callback_query
-        await query.answer()
+    async def cmd_history(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        rows = await self.db.recent_trades(15) if self.db else []
+        if not rows:
+            await self._reply(update, "لا يوجد سجل صفقات بعد (أو قاعدة البيانات غير متصلة).")
+            return
+        lines = ["🧾 <b>آخر الصفقات</b>"]
+        for r in rows:
+            pnl = f" · {r['pnl_usd']:+.2f}$" if r["pnl_usd"] is not None else ""
+            lines.append(f"{r['created_at']:%m-%d %H:%M} {r['side']} <b>{escape(r['symbol'] or '?')}</b> "
+                         f"{r['usd']:.2f}${pnl} {escape(r['reason'] or '')}")
+        await self._reply(update, "\n".join(lines))
 
-        if query.data == "view_current":
-            current = await self.state.get_active_trader()
-            if current:
-                msg = f"التاجر النشط: `{current.get('handle')}`"
-            else:
-                msg = "لا يوجد تاجر نشط حالياً."
-            await query.edit_message_text(text=msg, parse_mode="Markdown")
+    async def cmd_scan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if self.scanner.running:
+            await self._reply(update, "⏳ يوجد مسح قيد التشغيل بالفعل.")
+            return
+        await self._reply(update, "🔎 بدأ المسح… قد يستغرق بضع دقائق بسبب حدود الـ API المجانية. ستصلك النتيجة هنا.")
+        self._spawn(self.scanner.run())
 
-    async def send_alert(self, text: str):
-        """إرسال تنبيه مباشر إلى حساب المشرف"""
+    async def cmd_token(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not context.args:
+            await self._reply(update, "الاستخدام: <code>/token MINT_ADDRESS</code>")
+            return
+        mint = context.args[0].strip()
+        await self._reply(update, "⏳ جارٍ التحليل…")
+        self._spawn(self._token_report(mint))
+
+    async def _token_report(self, mint: str):
         try:
-            await self.app.bot.send_message(
-                chat_id=settings.ALLOWED_ADMIN_CHAT_ID,
-                text=text,
-                parse_mode="Markdown"
-            )
-            logger.info("Alert sent to admin successfully.")
+            a = await self.scanner.analyze_mint(mint)
         except Exception as e:
-            logger.error(f"Failed to send alert: {e}")
+            await self.send(f"❌ فشل التحليل: {escape(str(e))}")
+            return
+        if a is None:
+            await self.send("لم أجد مجمع سيولة مدعوم لهذه العملة على GeckoTerminal.")
+            return
+        p, st, pl, bt = a.pool, a.stats, a.plan, a.bt
+        lines = [f"🧪 <b>{escape(p.symbol)}</b> — {escape(p.name)}",
+                 f"السيولة {p.liquidity_usd:,.0f}$ · حجم 24س {p.volume_24h_usd:,.0f}$ · العمر {p.age_days:.0f} يوم"]
+        if st:
+            lines.append(
+                f"موجات مكتملة: {st.n_cycles} · وسيط الهبوط {st.median_drop:.0%} · وسيط الصعود {st.median_rise:.0%}\n"
+                f"نسبة التعافي: {st.recovery_rate:.0%} · مدة الدورة ~{st.avg_cycle_hours:.0f} س · "
+                f"الاتجاه {st.trend_pct_day:+.1f}%/يوم · القيعان {st.lows_trend_pct_day:+.1f}%/يوم\n"
+                f"التقييم: <b>{a.score:.0f}</b>/100")
+        if pl:
+            lines.append(f"الخطة: دخول {fmt_price(pl.entry)} · هدف1 {fmt_price(pl.tp1)} · هدف2 {fmt_price(pl.tp2)} · "
+                         f"وقف {fmt_price(pl.stop)} · R/R {pl.reward_risk:.1f} · تكلفة ذهاب وإياب ~{pl.cost_pct:.1%}")
+        if bt:
+            lines.append(f"الاختبار التاريخي ({bt.test_days:.0f} يوم): {bt.trades} صفقات · فوز {bt.win_rate:.0%} · "
+                         f"عائد {bt.total_return_pct:+.1f}% · أسوأ صفقة {bt.worst_trade_pct:+.1f}%")
+        if a.top10 is not None:
+            lines.append(f"أكبر 10 ملاك: {a.top10:.0%}")
+        lines.append("✅ <b>مقبولة</b>" if a.accepted else "❌ <b>مرفوضة</b>: " + escape("، ".join(a.reasons)))
+        await self.send("\n".join(lines))
+
+    async def cmd_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.state.set_paused(True)
+        await self._reply(update, "⏸ تم إيقاف فتح صفقات جديدة. المراكز المفتوحة ما زالت تُدار (أهداف ووقف).")
+
+    async def cmd_resume(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.state.set_paused(False)
+        await self._reply(update, "▶️ تم الاستئناف.")
+
+    async def cmd_closeall(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        n = await self.monitor.close_all()
+        await self._reply(update, f"تم إغلاق {n} مركز." if n else "لا توجد مراكز مفتوحة.")

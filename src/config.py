@@ -1,20 +1,75 @@
-from pydantic_settings import BaseSettings
+from typing import Literal
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
+    """All runtime settings. Values come from Railway variables (or a local .env)."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", env_ignore_empty=True)
+
+    # --- Infrastructure ---
     PORT: int = 8080
     LOG_LEVEL: str = "INFO"
     REDIS_URL: str
-    DATABASE_URL: str
-    FOMO_API_BASE: str = "https://fomoapi.io/api/v1"
-    FOMO_API_KEY: str
+    DATABASE_URL: str | None = None
+
+    # --- Telegram ---
     TELEGRAM_BOT_TOKEN: str
     ALLOWED_ADMIN_CHAT_ID: int
-    TARGET_BOT_USERNAME: str = "@DawnTradeBot"
+
+    # --- Data providers ---
+    SOLANA_RPC_URL: str | None = None          # Helius mainnet RPC URL
+    HELIUS_API_KEY: str | None = None          # used for whale webhooks (next phase)
+    BIRDEYE_API_KEY: str | None = None         # optional: holder concentration
+    JUPITER_API_KEY: str | None = None         # live prices (and execution later)
+    COINGECKO_DEMO_API_KEY: str | None = None  # optional: higher GeckoTerminal limits
+    GECKO_CALLS_PER_MIN: int = 20
+
+    # --- Execution (live mode is NOT implemented yet; kept for the next phase) ---
+    WALLET_PRIVATE_KEY: str | None = None
+    TRADING_MODE: Literal["paper", "live"] = "paper"
+
+    # --- Optional AI ---
     XAI_API_KEY: str | None = None
     ENABLE_GROK_AUDIT: bool = False
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
+    # --- Risk ---
+    MAX_POSITION_USD: float = 20.0
+    MAX_OPEN_POSITIONS: int = 3
+    DAILY_LOSS_LIMIT_USD: float = 50.0
+    MAX_SLIPPAGE_BPS: int = 300
+    PAPER_START_BALANCE_USD: float = 1000.0
+    STOP_COOLDOWN_HOURS: float = 12.0
+
+    # --- Scanner (which coins qualify) ---
+    SCAN_INTERVAL_MIN: int = 240
+    SCAN_POOL_PAGES: int = 5
+    MIN_TOKEN_AGE_DAYS: float = 7.0
+    MIN_LIQUIDITY_USD: float = 75_000
+    MIN_VOLUME_24H_USD: float = 100_000
+    MAX_FDV_USD: float = 300_000_000
+    MAX_TOP10_HOLDER_PCT: float = 0.40
+    MAX_ANALYZE_PER_SCAN: int = 25
+    WATCHLIST_SIZE: int = 15
+    MIN_SCORE: float = 55.0
+    HISTORY_HOURS: int = 720  # 30 days of hourly candles
+
+    # --- Wave model ---
+    ZIGZAG_PCT: float = 0.10
+    ENTRY_DROP_FACTOR: float = 0.85   # enter after 85% of the coin's median drop
+    TP1_FACTOR: float = 0.60          # first target = 60% of median rise
+    TP2_FACTOR: float = 0.85          # second target = 85% of median rise
+    MIN_REWARD_RISK: float = 1.3
+
+    # --- Monitor ---
+    PRICE_POLL_SEC: int = 15
+    BOUNCE_CONFIRM_PCT: float = 0.02  # buy only after a 2% bounce off the local low
+    LIQUIDITY_DROP_EXIT_PCT: float = 0.40
+
+    @property
+    def max_slippage(self) -> float:
+        return self.MAX_SLIPPAGE_BPS / 10_000
+
 
 settings = Settings()

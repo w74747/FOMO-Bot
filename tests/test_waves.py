@@ -1,0 +1,65 @@
+from src.analysis.backtest import backtest
+from src.analysis.waves import score, wave_stats, zigzag
+from src.trading.strategy import StrategyParams, build_plan
+from tests.helpers import wave_candles
+
+
+def test_zigzag_alternates():
+    pivots, tentative = zigzag(wave_candles(), 0.10)
+    kinds = [p.kind for p in pivots]
+    assert len(pivots) >= 30
+    assert all(a != b for a, b in zip(kinds, kinds[1:]))
+    assert tentative is not None
+
+
+def test_ranging_coin_is_accepted():
+    st = wave_stats(wave_candles(), 0.10)
+    assert st.n_cycles >= 15
+    assert 0.22 < st.median_drop < 0.32
+    assert st.recovery_rate > 0.9
+    assert abs(st.trend_pct_day) < 1
+    assert 30 < st.avg_cycle_hours < 42
+    sc, reasons = score(st, 300_000)
+    assert reasons == []
+    assert sc >= 70
+
+
+def test_downtrend_is_rejected():
+    st = wave_stats(wave_candles(drift_per_day=-6), 0.10)
+    sc, reasons = score(st, 300_000)
+    assert any("downtrend" in r or "lower lows" in r for r in reasons)
+
+
+def test_flat_coin_is_rejected():
+    st = wave_stats(wave_candles(amp=0.02, noise=0.002), 0.10)
+    _, reasons = score(st, 300_000)
+    assert reasons
+
+
+def test_plan_levels_and_costs():
+    p = StrategyParams()
+    plan = build_plan(1.0, 0.25, 0.35, 36, 300_000, 20, p)
+    assert plan is not None
+    assert plan.stop < plan.entry < plan.tp1 < plan.tp2 < 1.2
+    assert abs(plan.entry - (1 - 0.25 * 0.85)) < 1e-9
+    # tiny pool: price impact kills the trade
+    assert build_plan(1.0, 0.25, 0.35, 36, 2_000, 20, p) is None
+
+
+def test_backtest_profits_on_clean_waves_and_not_on_crash():
+    p = StrategyParams()
+    good = backtest(wave_candles(), 0.10, p, 300_000, 20)
+    assert good.trades >= 5
+    assert good.total_return_pct > 0
+    assert backtest(wave_candles(drift_per_day=-15, amp=0.12), 0.10, p, 300_000, 20).trades == 0
+
+
+def test_backtest_stop_limits_loss_on_rug():
+    from src.data.models import Candle
+    c = wave_candles(hours=600)
+    last, t = c[-1].c, c[-1].ts
+    for i in range(1, 121):
+        px = last * (0.3 if i > 48 else 1 - 0.7 * i / 48)
+        c.append(Candle(t + i * 3600, px, px * 1.01, px * 0.99, px, 1))
+    r = backtest(c, 0.10, StrategyParams(), 300_000, 20)
+    assert r.worst_trade_pct > -20   # stop caps the damage of a 70% collapse
