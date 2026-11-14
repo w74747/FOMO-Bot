@@ -11,6 +11,7 @@ from src.analysis.waves import WaveStats, score, wave_stats
 from src.data.geckoterminal import QUOTE_SYMBOLS, GeckoClient
 from src.data.http import HttpError
 from src.data.models import PoolInfo
+from src.data.jupiter import TOKEN_CATEGORIES, JupiterClient
 from src.data.safety import SafetyChecker
 from src.trading.strategy import StrategyParams, TradePlan, build_plan
 
@@ -79,10 +80,65 @@ def prefilter(pools: list[PoolInfo], s) -> tuple[list[PoolInfo], dict[str, int]]
     return kept, rejected
 
 
+def prefilter_tokens(tokens: list[dict], s) -> tuple[list[dict], dict[str, int]]:
+    """Cheap filters on Jupiter Tokens V2 data (no extra API calls)."""
+    rejected: dict[str, int] = {}
+    kept: dict[str, dict] = {}
+
+    def rej(key):
+        rejected[key] = rejected.get(key, 0) + 1
+
+    seen: set[str] = set()
+    for t in tokens:
+        if t["mint"] in seen:  # the same token appears in several Jupiter categories
+            continue
+        seen.add(t["mint"])
+        sym = (t["symbol"] or "").upper()
+        if t["mint"] in EXCLUDED_MINTS or sym in QUOTE_SYMBOLS or sym in EXCLUDED_SYMBOLS or "USD" in sym:
+            rej("major/stable")
+        elif t["is_sus"]:
+            rej("flagged suspicious")
+        elif t["mint_disabled"] is False:
+            rej("mint authority active")
+        elif t["freeze_disabled"] is False:
+            rej("freeze authority active")
+        elif t["age_days"] < s.MIN_TOKEN_AGE_DAYS:
+            rej("too young")
+        elif t["liquidity"] < s.MIN_LIQUIDITY_USD:
+            rej("low liquidity")
+        elif t["volume_24h"] < s.MIN_VOLUME_24H_USD:
+            rej("low volume")
+        elif t["fdv"] and t["fdv"] > s.MAX_FDV_USD:
+            rej("fdv too high")
+        elif t["holders"] and t["holders"] < s.MIN_HOLDERS:
+            rej("few holders")
+        elif t["organic_score"] < s.MIN_ORGANIC_SCORE:
+            rej("low organic score")
+        elif t["top_holders_pct"] is not None and t["top_holders_pct"] > s.MAX_TOP10_HOLDER_PCT:
+            rej("concentrated holders")
+        else:
+            kept[t["mint"]] = t
+    ranked = sorted(kept.values(), key=lambda t: t["volume_24h"], reverse=True)
+    return ranked, rejected
+
+
+def merge_token_into_pool(pool: PoolInfo, t: dict) -> PoolInfo:
+    """Use Jupiter's aggregated numbers (liquidity across all pools, real token age)."""
+    pool.symbol = t["symbol"] or pool.symbol
+    pool.name = t["name"] or pool.name
+    pool.liquidity_usd = max(t["liquidity"], pool.liquidity_usd)
+    pool.volume_24h_usd = t["volume_24h"] or pool.volume_24h_usd
+    pool.fdv_usd = t["fdv"] or pool.fdv_usd
+    pool.age_days = max(t["age_days"], pool.age_days)
+    return pool
+
+
 class Scanner:
     def __init__(self, gecko: GeckoClient, safety: SafetyChecker, state, db, settings,
-                 notify: Callable[[str], Awaitable[None]] | None = None):
+                 notify: Callable[[str], Awaitable[None]] | None = None,
+                 jupiter: JupiterClient | None = None):
         self.gecko = gecko
+        self.jupiter = jupiter
         self.safety = safety
         self.state = state
         self.db = db
@@ -90,6 +146,35 @@ class Scanner:
         self.params = StrategyParams.from_settings(settings)
         self.notify = notify
         self.running = False
+
+    async def discover_tokens(self) -> list[dict]:
+        tokens: list[dict] = []
+        for cat in TOKEN_CATEGORIES:
+            try:
+                tokens += await self.jupiter.top_tokens(cat, "24h", 100)
+            except HttpError as e:
+                logger.warning(f"Jupiter {cat} failed: {e}")
+        return tokens
+
+    async def candidates(self) -> tuple[int, list[tuple[PoolInfo, dict | None]], dict[str, int]]:
+        """Returns (n_seen, [(pool, jupiter_token_or_None)], rejected_counts)."""
+        if self.jupiter:
+            tokens = await self.discover_tokens()
+            if tokens:
+                kept, rejected = prefilter_tokens(tokens, self.s)
+                kept = kept[: self.s.MAX_ANALYZE_PER_SCAN]
+                pools = await self.gecko.best_pools([t["mint"] for t in kept])
+                out = []
+                for t in kept:
+                    if t["mint"] in pools:
+                        out.append((merge_token_into_pool(pools[t["mint"]], t), t))
+                    else:
+                        rejected["no supported pool"] = rejected.get("no supported pool", 0) + 1
+                return len({t["mint"] for t in tokens}), out, rejected
+            logger.warning("Jupiter discovery returned nothing; falling back to GeckoTerminal pools.")
+        pools = await self.discover()
+        kept, rejected = prefilter(pools, self.s)
+        return len(pools), [(p, None) for p in kept[: self.s.MAX_ANALYZE_PER_SCAN]], rejected
 
     async def discover(self) -> list[PoolInfo]:
         pools: list[PoolInfo] = []
@@ -101,8 +186,10 @@ class Scanner:
                 break
         return pools
 
-    async def analyze_pool(self, pool: PoolInfo, check_holders: bool = True) -> Analysis:
+    async def analyze_pool(self, pool: PoolInfo, token: dict | None = None) -> Analysis:
         a = Analysis(pool=pool)
+        if token is not None:
+            a.top10 = token.get("top_holders_pct")
         a.safety = await self.safety.mint_check(pool.mint)
         if not a.safety.get("ok", True):
             a.reasons.extend(a.safety["reasons"])
@@ -129,27 +216,23 @@ class Scanner:
             a.reasons.append(f"backtest negative ({a.bt.total_return_pct:+.1f}% over {a.bt.trades} trades)")
         if a.score < self.s.MIN_SCORE and not a.reasons:
             a.reasons.append(f"score {a.score:.0f} < {self.s.MIN_SCORE:.0f}")
-        if check_holders and not a.reasons:
-            a.top10 = await self._top10(pool.mint)
-            if a.top10 is not None and a.top10 > self.s.MAX_TOP10_HOLDER_PCT:
-                a.reasons.append(f"top-10 holders own {a.top10:.0%}")
+        if a.top10 is not None and a.top10 > self.s.MAX_TOP10_HOLDER_PCT:
+            a.reasons.append(f"top holders own {a.top10:.0%}")
         return a
 
-    async def _top10(self, mint: str) -> float | None:
-        cached = await self.state.cache_get(f"top10:{mint}")
-        if cached is not None:
-            return cached.get("v")
-        val = await self.safety.top10_pct(mint)
-        await self.state.cache_set(f"top10:{mint}", {"v": val}, 24 * 3600)
-        return val
-
     async def analyze_mint(self, mint: str) -> Analysis | None:
-        pools = await self.gecko.token_pools(mint)
-        pools = [p for p in pools if p.quote_symbol in QUOTE_SYMBOLS]
-        if not pools:
+        token = None
+        if self.jupiter:
+            try:
+                info = await self.jupiter.token_info([mint])
+                token = next((t for t in info if t["mint"] == mint), None)
+            except HttpError:
+                token = None
+        pools = await self.gecko.best_pools([mint])
+        if mint not in pools:
             return None
-        best = max(pools, key=lambda p: p.liquidity_usd)
-        return await self.analyze_pool(best)
+        pool = merge_token_into_pool(pools[mint], token) if token else pools[mint]
+        return await self.analyze_pool(pool, token)
 
     async def run(self) -> list[Analysis]:
         if self.running:
@@ -158,15 +241,13 @@ class Scanner:
         self.running = True
         started = time.time()
         try:
-            pools = await self.discover()
-            kept, rejected = prefilter(pools, self.s)
-            kept = kept[: self.s.MAX_ANALYZE_PER_SCAN]
-            logger.info(f"Scan: {len(pools)} pools, {len(kept)} pass prefilter, rejected={rejected}")
+            n_seen, kept, rejected = await self.candidates()
+            logger.info(f"Scan: {n_seen} tokens/pools seen, {len(kept)} to analyse, rejected={rejected}")
 
             results: list[Analysis] = []
-            for pool in kept:
+            for pool, token in kept:
                 try:
-                    a = await self.analyze_pool(pool)
+                    a = await self.analyze_pool(pool, token)
                 except Exception as e:  # one bad token must not kill the scan
                     logger.exception(f"analysis failed for {pool.symbol}: {e}")
                     continue
@@ -184,7 +265,7 @@ class Scanner:
             await self.state.mark_scan()
             logger.info(f"Scan done in {time.time() - started:.0f}s: {len(accepted)} on watchlist")
             if self.notify:
-                await self.notify(self._report(len(pools), len(kept), results, accepted, time.time() - started))
+                await self.notify(self._report(n_seen, len(kept), results, accepted, time.time() - started, rejected))
             return results
         finally:
             self.running = False
@@ -227,11 +308,11 @@ class Scanner:
                 new[mint] = {**old[mint], "status": "holding"}
         await self.state.replace_watchlist(new)
 
-    def _report(self, n_pools, n_kept, results, accepted, secs) -> str:
+    def _report(self, n_pools, n_kept, results, accepted, secs, prefilter_rejected=None) -> str:
         from html import escape
         lines = [
             "🔎 <b>اكتمل المسح</b>",
-            f"مجمعات مفحوصة: {n_pools} · اجتازت الفلاتر: {n_kept} · حُللت: {len(results)} · "
+            f"عملات مفحوصة: {n_pools} · اجتازت الفلاتر: {n_kept} · حُللت: {len(results)} · "
             f"في قائمة المراقبة: <b>{len(accepted)}</b> ({secs:.0f} ث)",
         ]
         for a in accepted[:10]:
@@ -241,6 +322,9 @@ class Scanner:
                 f"هبوط {st.median_drop:.0%} / صعود {st.median_rise:.0%} | "
                 f"اختبار تاريخي: {bt.trades} صفقات {bt.total_return_pct:+.1f}%"
             )
+        if prefilter_rejected:
+            lines.append("مستبعدة في الفلترة الأولية: " + "، ".join(
+                f"{escape(k)} ×{v}" for k, v in sorted(prefilter_rejected.items(), key=lambda x: -x[1])[:6]))
         if not accepted:
             top_reasons: dict[str, int] = {}
             for a in results:

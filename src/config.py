@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     BIRDEYE_API_KEY: str | None = None         # optional: holder concentration
     JUPITER_API_KEY: str | None = None         # live prices (and execution later)
     COINGECKO_DEMO_API_KEY: str | None = None  # optional: higher GeckoTerminal limits
-    GECKO_CALLS_PER_MIN: int = 20
+    GECKO_CALLS_PER_MIN: int = 8
 
     # --- Execution (live mode is NOT implemented yet; kept for the next phase) ---
     WALLET_PRIVATE_KEY: str | None = None
@@ -49,7 +49,9 @@ class Settings(BaseSettings):
     MIN_LIQUIDITY_USD: float = 75_000
     MIN_VOLUME_24H_USD: float = 100_000
     MAX_FDV_USD: float = 300_000_000
-    MAX_TOP10_HOLDER_PCT: float = 0.40
+    MAX_TOP10_HOLDER_PCT: float = 0.40   # Jupiter audit.topHoldersPercentage
+    MIN_ORGANIC_SCORE: float = 20.0       # Jupiter organic score (filters wash trading)
+    MIN_HOLDERS: int = 500
     MAX_ANALYZE_PER_SCAN: int = 25
     WATCHLIST_SIZE: int = 15
     MIN_SCORE: float = 55.0

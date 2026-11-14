@@ -69,7 +69,7 @@ async def main():
     jupiter = JupiterClient(http, settings.JUPITER_API_KEY)
     safety = SafetyChecker(http, settings.SOLANA_RPC_URL, settings.BIRDEYE_API_KEY)
     broker = PaperBroker(state, db, settings)
-    scanner = Scanner(gecko, safety, state, db, settings, notify=tg.send)
+    scanner = Scanner(gecko, safety, state, db, settings, notify=tg.send, jupiter=jupiter)
     monitor = Monitor(state, jupiter, broker, settings, notify=tg.send)
     tg.bind(state, db, scanner, monitor)
 

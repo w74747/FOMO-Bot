@@ -70,7 +70,8 @@ class Http:
                     body = await resp.text()
                     if resp.status == 429 or resp.status >= 500:
                         retry_after = resp.headers.get("Retry-After")
-                        delay = float(retry_after) if retry_after and retry_after.isdigit() else backoff * 15
+                        hinted = float(retry_after) if retry_after and retry_after.isdigit() else 0.0
+                        delay = min(max(hinted, backoff * 15), 180.0)  # never retry instantly
                         if limiter and resp.status == 429:
                             limiter.penalize(delay)
                         logger.warning(f"{resp.status} from {url}, retry in {delay:.0f}s")

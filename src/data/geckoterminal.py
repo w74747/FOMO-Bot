@@ -69,6 +69,30 @@ def parse_pools(payload: dict) -> list[PoolInfo]:
     return pools
 
 
+QUOTE_MINTS = {
+    "So11111111111111111111111111111111111111112": "SOL",
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": "USDC",
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": "USDT",
+}
+
+
+def parse_multi_top_pools(payload: dict) -> dict[str, list[PoolInfo]]:
+    """Parse /tokens/multi/{mints}?include=top_pools into {mint: [pools where mint is the base]}."""
+    included_pools = [i for i in (payload.get("included") or []) if i.get("type") == "pool"]
+    token_stub = []
+    for item in included_pools:  # synthesise quote token records so symbols resolve
+        qid = _rel_id(item, "quote_token")
+        qmint = qid.split("_", 1)[-1]
+        if qmint in QUOTE_MINTS:
+            token_stub.append({"id": qid, "type": "token",
+                               "attributes": {"address": qmint, "symbol": QUOTE_MINTS[qmint]}})
+    pools = parse_pools({"data": included_pools, "included": token_stub})
+    out: dict[str, list[PoolInfo]] = {}
+    for p in pools:
+        out.setdefault(p.mint, []).append(p)
+    return out
+
+
 def parse_ohlcv(payload: dict) -> list[Candle]:
     rows = (((payload.get("data") or {}).get("attributes") or {}).get("ohlcv_list")) or []
     candles = [Candle(int(r[0]), _f(r[1]), _f(r[2]), _f(r[3]), _f(r[4]), _f(r[5])) for r in rows if len(r) >= 6]
@@ -105,6 +129,28 @@ class GeckoClient:
             {"page": 1, "include": "base_token,quote_token"},
         )
         return [p for p in parse_pools(data) if p.mint == mint]
+
+    async def best_pools(self, mints: list[str]) -> dict[str, PoolInfo]:
+        """Most liquid SOL/USDC/USDT pool for each mint (30 mints per call)."""
+        out: dict[str, PoolInfo] = {}
+        for i in range(0, len(mints), 30):
+            chunk = mints[i:i + 30]
+            try:
+                data = await self._get(f"/networks/{NETWORK}/tokens/multi/{','.join(chunk)}",
+                                       {"include": "top_pools"})
+                found = parse_multi_top_pools(data)
+            except Exception:
+                found = {}
+            for mint in chunk:
+                pools = [p for p in found.get(mint, []) if p.quote_symbol in QUOTE_SYMBOLS]
+                if not pools:  # fallback: one call per token
+                    try:
+                        pools = [p for p in await self.token_pools(mint) if p.quote_symbol in QUOTE_SYMBOLS]
+                    except Exception:
+                        pools = []
+                if pools:
+                    out[mint] = max(pools, key=lambda p: p.liquidity_usd)
+        return out
 
     async def ohlcv(self, pool: str, timeframe: str = "hour", aggregate: int = 1, limit: int = 720) -> list[Candle]:
         data = await self._get(
