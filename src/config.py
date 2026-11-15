@@ -49,7 +49,9 @@ class Settings(BaseSettings):
     MAX_SLIPPAGE_BPS: int = 300
     PAPER_START_BALANCE_USD: float = 1000.0
     STOP_COOLDOWN_HOURS: float = 12.0
-    LIQUIDITY_BAN_HOURS: float = 72.0   # coins whose liquidity collapsed are ignored this long
+    LIQUIDITY_BAN_HOURS: float = 72.0
+    STRIKE_LIMIT: int = 2               # stop-losses on one coin within 7 days…
+    STRIKE_BAN_HOURS: float = 72.0      # …ban it this long (its waves are breaking)   # coins whose liquidity collapsed are ignored this long
     MIN_BT_TRADES: int = 3              # no watchlist entry without back-test evidence
 
     # --- Network costs (Solana) ---

@@ -208,3 +208,17 @@ async def test_fast_tick_only_prices_hot_coins(env):
     await mon.tick(full=False)                     # fast tick sees the bounce and buys
     assert MINT in calls[-1]
     assert await state.get_position(MINT) is not None
+
+
+async def test_second_stop_loss_bans_coin_longer(env):
+    state, db, jup, mon, msgs = env
+    for _ in range(2):
+        await state.set_watch_item(MINT, watch_item())
+        await state.r.delete(f"fb:cooldown:{MINT}")
+        await step(mon, jup, 0.78)
+        await step(mon, jup, 0.80)                    # buy
+        pos = await state.get_position(MINT)
+        await step(mon, jup, pos["stop"] * 0.99)      # stop-loss
+    ttl = await state.r.ttl(f"fb:cooldown:{MINT}")
+    assert ttl > 13 * 3600                            # 72h ban, not the 12h cooldown
+    assert any("مُنعت" in m for m in msgs)

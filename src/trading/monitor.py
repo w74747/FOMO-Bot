@@ -280,7 +280,14 @@ class Monitor:
             msg += f"\nأُغلق المركز. الإجمالي: {pos['realized_usd']:+.2f}$"
             still_held = mint in await self.state.held_mints()
             if cooldown:
-                await self.state.set_cooldown(mint, self.s.STOP_COOLDOWN_HOURS)
+                hours = self.s.STOP_COOLDOWN_HOURS
+                if reason == "وقف خسارة" and broker.book == "paper":
+                    strikes = await self.state.add_strike(mint)
+                    if strikes >= self.s.STRIKE_LIMIT:
+                        hours = self.s.STRIKE_BAN_HOURS
+                        msg += (f"\n🚫 وقف الخسارة رقم {strikes} على هذه العملة خلال 7 أيام: "
+                                f"موجاتها تنكسر، مُنعت {hours:.0f} ساعة.")
+                await self.state.set_cooldown(mint, max(hours, await self._remaining_cooldown_h(mint)))
                 if not still_held:
                     await self.state.remove_watch_item(mint)
             elif item and not still_held:
@@ -291,6 +298,10 @@ class Monitor:
                 await self.state.set_watch_item(mint, item)
         await self.notify(msg)
         return pos, pnl, closed
+
+    async def _remaining_cooldown_h(self, mint: str) -> float:
+        ttl = await self.state.r.ttl(f"fb:cooldown:{mint}")
+        return max(0.0, ttl / 3600) if ttl and ttl > 0 else 0.0
 
     async def close_all(self, reason: str = "إغلاق يدوي", book: str | None = None) -> int:
         n = 0

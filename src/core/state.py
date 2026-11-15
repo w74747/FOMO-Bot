@@ -105,6 +105,13 @@ class StateManager:
     async def set_cooldown(self, mint: str, hours: float):
         await self.r.set(P + f"cooldown:{mint}", "1", ex=max(1, int(hours * 3600)))
 
+    async def add_strike(self, mint: str) -> int:
+        """Count stop-losses on a coin over a rolling 7 days."""
+        key = P + f"strikes:{mint}"
+        n = await self.r.incr(key)
+        await self.r.expire(key, 7 * 86400)
+        return int(n)
+
     async def in_cooldown(self, mint: str) -> bool:
         return bool(await self.r.exists(P + f"cooldown:{mint}"))
 

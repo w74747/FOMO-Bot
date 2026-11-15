@@ -12,7 +12,8 @@ def strategy_closes(rows: list[dict]) -> list[dict]:
 
 
 # Go-live criteria agreed before any results were seen.
-MIN_TRADES = 30
+MIN_TRADES_LIVE = 15   # start small real trading (/live on)
+MIN_TRADES = 30        # judge the strategy / scale up
 MIN_EXPECTANCY_PCT = 2.0
 MAX_DRAWDOWN_PCT = 15.0
 
@@ -79,7 +80,8 @@ async def build_report(db, state, settings, hours: float = 24) -> str:
         c4 = dd <= MAX_DRAWDOWN_PCT
         mark = lambda ok: "✅" if ok else "⬜"  # noqa: E731
         lines += [
-            f"{mark(c1)} عدد الصفقات: {tot['n']}/{MIN_TRADES}",
+            f"{mark(c1)} عدد الصفقات: {tot['n']} — "
+            f"{'✅' if tot['n'] >= MIN_TRADES_LIVE else '⬜'} {MIN_TRADES_LIVE} لبدء الحقيقي الصغير · {MIN_TRADES} للتوسع",
             f"{mark(c2)} صافي الربح: {tot['pnl']:+.2f}$ (نسبة الفوز {tot['wins'] / tot['n']:.0%})",
             f"{mark(c3)} متوسط ربح الصفقة: {tot['avg_ret']:+.2f}% (المطلوب ≥ {MIN_EXPECTANCY_PCT}%){exp_txt}",
             f"{mark(c4)} أكبر تراجع: {dd:.1f}% (الحد {MAX_DRAWDOWN_PCT}%)",

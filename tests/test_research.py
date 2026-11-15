@@ -44,7 +44,7 @@ async def test_report_renders():
     rows = [{"pnl_usd": 2.0, "return_pct": 10.0, "expected_pct": 8.0, "closed_at": now},
             {"pnl_usd": -1.0, "return_pct": -5.0, "expected_pct": 8.0, "closed_at": now}]
     txt = await build_report(FakeDB(rows), state, settings)
-    assert "2/30" in txt and "+1.00$" in txt and "+8.0%" in txt
+    assert "عدد الصفقات: 2 " in txt and "15 لبدء" in txt and "+1.00$" in txt and "+8.0%" in txt
     empty = await build_report(FakeDB([]), state, settings)
     assert "0/30" in empty
 
@@ -140,7 +140,7 @@ async def test_report_excludes_manual_closes():
             {"pnl_usd": -1.41, "return_pct": -7.0, "expected_pct": 6.0, "closed_at": now, "exit_reason": "إغلاق يدوي"},
             {"pnl_usd": 0.0, "return_pct": 0.0, "expected_pct": 6.0, "closed_at": now, "exit_reason": "إغلاق يدوي"}]
     txt = await build_report(FakeDB(rows), state, settings)
-    assert "1/30" in txt and "مستبعد: 2" in txt and "-1.67$" in txt
+    assert "عدد الصفقات: 1 " in txt and "مستبعد: 2" in txt and "-1.67$" in txt
 
 
 def test_arabic_reasons_and_address_extraction():
@@ -203,3 +203,31 @@ async def test_manual_coin_is_rechecked_every_scan_and_never_capped_out(monkeypa
     assert len(wl) == 2                                       # + best automatic coin
     a, why = await sc.analyze_manual("MINE")
     assert a.accepted and why is None
+
+
+async def test_unsafe_mints_do_not_use_analysis_slots(monkeypatch):
+    import fakeredis.aioredis as fr
+    from src.analysis.scanner import Scanner
+    from src.data.models import PoolInfo
+    monkeypatch.setattr(settings, "MAX_ANALYZE_PER_SCAN", 2)
+    base = {"name": "", "price": 1, "liquidity": 3e5, "fdv": 2e6, "age_days": 40, "volume_24h": 5e5,
+            "holders": 3000, "organic_score": 50, "top_holders_pct": 0.2, "mint_disabled": None,
+            "freeze_disabled": None, "is_sus": False}
+
+    class J:
+        async def top_tokens(self, *a):
+            return [{**base, "mint": m, "symbol": m, "volume_24h": v}
+                    for m, v in (("STOCK1", 9e6), ("STOCK2", 8e6), ("MEME1", 6e5), ("MEME2", 5e5))]
+
+    class G:
+        async def best_pools(self, mints):
+            return {m: PoolInfo("P" + m, m, m, m, "SOL", "d", 1, 3e5, 1, 1, 30, 1, 0) for m in mints}
+
+    class S:
+        async def mint_check(self, m):
+            return {"ok": not m.startswith("STOCK"), "reasons": ["mint authority active (x)"] if m.startswith("STOCK") else []}
+
+    sc = Scanner(G(), S(), StateManager(client=fr.FakeRedis(decode_responses=True)), None, settings, jupiter=J())
+    n, kept, rejected = await sc.candidates()
+    assert [p.mint for p, _ in kept] == ["MEME1", "MEME2"]
+    assert rejected["mint authority active"] == 2

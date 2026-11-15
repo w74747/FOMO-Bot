@@ -174,7 +174,19 @@ class Scanner:
             tokens = await self.discover_tokens()
             if tokens:
                 kept, rejected = prefilter_tokens(tokens, self.s)
-                kept = kept[: self.s.MAX_ANALYZE_PER_SCAN]
+                # Cheap on-chain safety check first (RPC, no candle quota): tokens with an active
+                # mint/freeze authority (tokenised stocks, bridged assets…) must not use up analysis slots.
+                safe = []
+                for t in kept:
+                    if len(safe) >= self.s.MAX_ANALYZE_PER_SCAN:
+                        break
+                    chk = await self.safety.mint_check(t["mint"])
+                    if chk.get("ok", True):
+                        safe.append(t)
+                    else:
+                        key = (chk.get("reasons") or ["unsafe mint"])[0].split(" (")[0]
+                        rejected[key] = rejected.get(key, 0) + 1
+                kept = safe
                 pools = await self.gecko.best_pools([t["mint"] for t in kept])
                 out = []
                 for t in kept:
