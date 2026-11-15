@@ -28,6 +28,8 @@ COMMANDS = [
     ("token", "تحليل عملة: /token <عنوان أو رابط>"),
     ("watch", "اقتراح عملة للمراقبة: /watch <عنوان أو رابط>"),
     ("unwatch", "إزالة عملة اقترحتها: /unwatch <عنوان>"),
+    ("ban", "منع عملة من التداول: /ban <عنوان> [ساعات]"),
+    ("unban", "رفع المنع عن عملة: /unban <عنوان>"),
     ("mylist", "العملات التي اقترحتها"),
     ("report", "تقرير الأداء والتقدم نحو التداول الحقيقي"),
     ("collect", "جمع بيانات تاريخية لعملات إضافية"),
@@ -101,6 +103,7 @@ class TelegramController:
             "collect": self.cmd_collect, "optimize": self.cmd_optimize, "apply": self.cmd_apply,
             "params": self.cmd_params, "resetparams": self.cmd_resetparams,
             "watch": self.cmd_watch, "unwatch": self.cmd_unwatch, "mylist": self.cmd_mylist,
+            "ban": self.cmd_ban, "unban": self.cmd_unban,
             "wallet": self.cmd_wallet, "live": self.cmd_live, "livetest": self.cmd_livetest, "stop": self.cmd_stop,
         }
         for name, fn in table.items():
@@ -577,3 +580,27 @@ class TelegramController:
         n = await self.monitor.close_all("إيقاف طوارئ", book="live")
         left = await self.state.get_positions("live")
         await self._reply(update, f"بيع {n} مركز." + (f" ⚠️ بقي {len(left)} لم يُبع، سأعيد المحاولة تلقائياً." if left else ""))
+
+    async def cmd_ban(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        from src.analysis.scanner import extract_address
+        args = context.args or []
+        mint = extract_address(" ".join(a for a in args if not a.replace(".", "").isdigit()))
+        hours = next((float(a) for a in args if a.replace(".", "").isdigit()), 72.0)
+        if not mint:
+            await self._reply(update, "الاستخدام: <code>/ban عنوان_العملة 72</code> (الساعات اختيارية، الافتراضي 72)")
+            return
+        await self.state.set_cooldown(mint, hours)
+        held = mint in await self.state.held_mints()
+        if not held:
+            await self.state.remove_watch_item(mint)
+        await self._reply(update, f"🚫 مُنعت العملة {hours:.0f} ساعة: لن يشتريها البوت ولن تدخل المراقبة."
+                                  + (" عليها مركز مفتوح وسيُدار حتى الخروج." if held else ""))
+
+    async def cmd_unban(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        from src.analysis.scanner import extract_address
+        mint = extract_address(" ".join(context.args or []))
+        if not mint:
+            await self._reply(update, "الاستخدام: <code>/unban عنوان_العملة</code>")
+            return
+        await self.state.r.delete(f"fb:cooldown:{mint}")
+        await self._reply(update, "✅ رُفع المنع. ستعود للمراقبة في المسح القادم إذا اجتازت الفلاتر.")

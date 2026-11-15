@@ -282,7 +282,10 @@ class Monitor:
             if cooldown:
                 hours = self.s.STOP_COOLDOWN_HOURS
                 if reason == "وقف خسارة" and broker.book == "paper":
-                    strikes = await self.state.add_strike(mint)
+                    counted = None
+                    if getattr(broker, "db", None) is not None and hasattr(broker.db, "count_stop_losses"):
+                        counted = await broker.db.count_stop_losses(mint, 7)
+                    strikes = counted if counted else await self.state.add_strike(mint)
                     if strikes >= self.s.STRIKE_LIMIT:
                         hours = self.s.STRIKE_BAN_HOURS
                         msg += (f"\n🚫 وقف الخسارة رقم {strikes} على هذه العملة خلال 7 أيام: "

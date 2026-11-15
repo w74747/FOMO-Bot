@@ -196,6 +196,14 @@ class Database:
                 "ORDER BY closed_at", float(since_hours * 3600))
         return [dict(r) for r in rows]
 
+    async def count_stop_losses(self, mint: str, days: float = 7) -> int | None:
+        """Stop-loss closes on a coin in the last `days` (history-based, survives restarts)."""
+        if not self.pool:
+            return None
+        return await self.pool.fetchval(
+            "SELECT COUNT(*) FROM closed_positions WHERE mint=$1 AND exit_reason='وقف خسارة' "
+            "AND closed_at >= NOW() - make_interval(days => $2)", mint, int(days))
+
     async def recent_trades(self, limit: int = 10) -> list[dict]:
         if not self.pool:
             return []

@@ -222,3 +222,16 @@ async def test_second_stop_loss_bans_coin_longer(env):
     ttl = await state.r.ttl(f"fb:cooldown:{MINT}")
     assert ttl > 13 * 3600                            # 72h ban, not the 12h cooldown
     assert any("مُنعت" in m for m in msgs)
+
+
+async def test_strikes_use_trade_history_when_available(env):
+    state, db, jup, mon, msgs = env
+
+    async def count_stop_losses(mint, days):
+        return 2            # e.g. one earlier stop recorded before this code existed + this one
+    db.count_stop_losses = count_stop_losses
+    await step(mon, jup, 0.78)
+    await step(mon, jup, 0.80)
+    pos = await state.get_position(MINT)
+    await step(mon, jup, pos["stop"] * 0.99)
+    assert await state.r.ttl(f"fb:cooldown:{MINT}") > 13 * 3600
