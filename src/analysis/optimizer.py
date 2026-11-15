@@ -111,7 +111,8 @@ def optimize(
     recommend_idx = None
     for i, r in enumerate(top, 1):
         if (r.b.trades >= 15 and r.b.tokens_traded >= MIN_TOKENS_B and r.b.avg_pct > 0
-                and r.b.total_lcb_pct > max(current.b.total_lcb_pct, 0) * 1.10):  # >=10% better
+                and r.b.total_lcb_pct > max(current.b.total_lcb_pct, 0) * 1.10   # >=10% better on B
+                and r.a.total_lcb_pct >= current.a.total_lcb_pct):               # and not worse on A
             recommend_idx = i
             break
     return {

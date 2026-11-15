@@ -231,3 +231,22 @@ async def test_unsafe_mints_do_not_use_analysis_slots(monkeypatch):
     n, kept, rejected = await sc.candidates()
     assert [p.mint for p, _ in kept] == ["MEME1", "MEME2"]
     assert rejected["mint authority active"] == 2
+
+
+def test_optimizer_does_not_recommend_when_A_and_B_disagree():
+    from src.analysis import optimizer as opt
+    cur = opt.ConfigResult({}, opt.SetStats(277, 41, .56, 6.29, 0, -25, 4.2, 1176), opt.SetStats(195, 36, .55, 4.9, 0, -29, 3.3, 646))
+    alt = opt.ConfigResult({}, opt.SetStats(379, 52, .56, 4.37, 0, -18, 2.9, 1094), opt.SetStats(264, 43, .59, 3.95, 0, -27, 2.9, 778))
+    better = opt.ConfigResult({}, opt.SetStats(300, 45, .58, 6.5, 0, -20, 4.3, 1290), opt.SetStats(220, 40, .58, 5.2, 0, -25, 3.6, 792))
+
+    def pick(top, current):
+        for i, r in enumerate(top, 1):
+            if (r.b.trades >= 15 and r.b.tokens_traded >= opt.MIN_TOKENS_B and r.b.avg_pct > 0
+                    and r.b.total_lcb_pct > max(current.b.total_lcb_pct, 0) * 1.10
+                    and r.a.total_lcb_pct >= current.a.total_lcb_pct):
+                return i
+        return None
+    assert pick([alt], cur) is None          # better on B, worse on A -> keep current
+    assert pick([alt, better], cur) == 2     # better on both -> recommend
+    import inspect
+    assert "r.a.total_lcb_pct >= current.a.total_lcb_pct" in inspect.getsource(opt.optimize)
