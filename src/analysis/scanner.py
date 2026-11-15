@@ -160,12 +160,16 @@ class Scanner:
         self._manual_results: list[Analysis] = []
 
     async def discover_tokens(self) -> list[dict]:
+        """Union of Jupiter's top lists over several windows. Short windows (6h, 1h) surface
+        older coins that are active right now and never make the 24h top 100."""
         tokens: list[dict] = []
-        for cat in TOKEN_CATEGORIES:
-            try:
-                tokens += await self.jupiter.top_tokens(cat, "24h", 100)
-            except HttpError as e:
-                logger.warning(f"Jupiter {cat} failed: {e}")
+        intervals = [i.strip() for i in self.s.DISCOVERY_INTERVALS.split(",") if i.strip()]
+        for interval in intervals:
+            for cat in TOKEN_CATEGORIES:
+                try:
+                    tokens += await self.jupiter.top_tokens(cat, interval, 100)
+                except HttpError as e:
+                    logger.warning(f"Jupiter {cat}/{interval} failed: {e}")
         return tokens
 
     async def candidates(self) -> tuple[int, list[tuple[PoolInfo, dict | None]], dict[str, int]]:

@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     # --- Scanner (which coins qualify) ---
     SCAN_INTERVAL_MIN: int = 240
     SCAN_POOL_PAGES: int = 5
+    DISCOVERY_INTERVALS: str = "24h,6h,1h"   # Jupiter top-list windows (no CoinGecko quota)
     MIN_TOKEN_AGE_DAYS: float = 7.0
     MIN_LIQUIDITY_USD: float = 75_000
     MIN_VOLUME_24H_USD: float = 100_000
