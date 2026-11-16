@@ -203,13 +203,22 @@ class TelegramController:
             await self._reply(update, "قائمة المراقبة فارغة. استخدم /scan لتشغيل مسح.")
             return
         icons = {"waiting": "⏳", "armed": "🎯", "holding": "📂"}
+        prices = await self.monitor.jupiter.prices(list(watch)) if self.monitor else {}
         lines = ["👀 <b>قائمة المراقبة</b>"]
         for w in sorted(watch.values(), key=lambda x: -x.get("score", 0)):
+            cur = prices.get(w["mint"], {}).get("price")
+            if cur:
+                gap = cur / w["entry"] - 1
+                where = (f"الآن {fmt_price(cur)} · "
+                         + (f"يحتاج هبوط {gap / (1 + gap):.0%} للوصول للدخول" if gap > 0 else "داخل منطقة الشراء"))
+            else:
+                where = "⚠️ لا يوجد سعر لحظي من Jupiter، فلا يمكن للبوت الدخول فيها"
             lines.append(
                 f"{icons.get(w.get('status'), '•')} <b>{escape(w['symbol'])}</b> تقييم {w.get('score', 0):.0f} · "
                 f"هبوط {w['median_drop']:.0%} / صعود {w['median_rise']:.0%} · دورة ~{w.get('avg_cycle_hours', 0):.0f}س\n"
                 f"   قمة {fmt_price(w['ref_high'])} → دخول {fmt_price(w['entry'])} · وقف {fmt_price(w['stop'])} · "
                 f"R/R {w.get('reward_risk', 0):.1f} · اختبار {w.get('bt_trades', 0)} صفقات {w.get('bt_return', 0):+.0f}%\n"
+                f"   {where}\n"
                 f"   <code>{w['mint']}</code>"
             )
         await self._reply(update, "\n".join(lines))

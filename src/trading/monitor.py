@@ -81,6 +81,9 @@ class Monitor:
             info = prices.get(mint)
             if info:
                 await self._watch(item, info)
+            elif full and time.time() - self._err_at.get("noprice:" + mint, 0) > 3600:
+                self._err_at["noprice:" + mint] = time.time()
+                logger.warning(f"no Jupiter price for watchlist coin {item.get('symbol')} ({mint})")
         if full:
             self.last_tick = time.time()
 
