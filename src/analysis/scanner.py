@@ -465,7 +465,7 @@ class Scanner:
             st, bt = a.stats, a.bt
             star = "⭐ " if a in self._manual_results else ""
             lines.append(
-                f"• {star}<b>{escape(a.pool.symbol)}</b> تقييم {a.score:.0f} | موجات {st.n_cycles} | "
+                f"• {star}<b>{escape(a.pool.symbol)}</b> تقييم {a.score:.0f} | موجات {st.n_cycles} | دورة ~{st.avg_cycle_hours:.0f}س | "
                 f"هبوط {st.median_drop:.0%} / صعود {st.median_rise:.0%} | "
                 f"اختبار تاريخي: {bt.trades} صفقات {bt.total_return_pct:+.1f}%"
             )

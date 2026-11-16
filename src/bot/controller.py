@@ -207,7 +207,7 @@ class TelegramController:
         for w in sorted(watch.values(), key=lambda x: -x.get("score", 0)):
             lines.append(
                 f"{icons.get(w.get('status'), '•')} <b>{escape(w['symbol'])}</b> تقييم {w.get('score', 0):.0f} · "
-                f"هبوط {w['median_drop']:.0%} / صعود {w['median_rise']:.0%}\n"
+                f"هبوط {w['median_drop']:.0%} / صعود {w['median_rise']:.0%} · دورة ~{w.get('avg_cycle_hours', 0):.0f}س\n"
                 f"   قمة {fmt_price(w['ref_high'])} → دخول {fmt_price(w['entry'])} · وقف {fmt_price(w['stop'])} · "
                 f"R/R {w.get('reward_risk', 0):.1f} · اختبار {w.get('bt_trades', 0)} صفقات {w.get('bt_return', 0):+.0f}%\n"
                 f"   <code>{w['mint']}</code>"
