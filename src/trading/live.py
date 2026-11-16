@@ -39,7 +39,8 @@ class LiveBroker:
         return await self.state.live_enabled()
 
     # ------------------------------------------------------------ swap primitive
-    async def swap(self, input_mint: str, output_mint: str, amount: int, slippage_bps: int) -> dict:
+    async def swap(self, input_mint: str, output_mint: str, amount: int, slippage_bps: int,
+                   check_impact: bool = True) -> dict:
         """One Jupiter swap. Returns {"signature", "in", "out", "sol_delta"} where sol_delta is the
         real change of the wallet's SOL balance in lamports (negative when SOL was spent)."""
         order = await self.http.get_json(f"{JUP_SWAP}/order", params={
@@ -49,7 +50,11 @@ class LiveBroker:
         if not order.get("transaction"):
             raise SwapFailed(f"order rejected: {order.get('errorCode')} {order.get('errorMessage') or order.get('error')}")
         impact = order.get("priceImpact")   # percent (negative = cost); ambiguous fields are ignored
-        if isinstance(impact, (int, float)) and abs(float(impact)) > slippage_bps / 100:
+        if isinstance(impact, (int, float)):
+            logger.info(f"quote {input_mint[:6]}->{output_mint[:6]} impact={float(impact):.2f}%")
+        # Entries are refused on a bad quote. Exits are never blocked by this estimate (it proved
+        # noisy: -11.6% on a $10 sell that filled fine seconds later); slippageBps still caps them.
+        if check_impact and isinstance(impact, (int, float)) and abs(float(impact)) > slippage_bps / 100:
             raise SwapFailed(f"price impact {float(impact):.2f}% above limit")
 
         signed = sign_versioned(order["transaction"], self.wallet.kp)
@@ -134,7 +139,7 @@ class LiveBroker:
             raise RiskBlocked("لا يوجد رصيد من العملة في المحفظة؛ أُغلق السجل")
         urgent = reason not in ("الهدف 1",)
         slippage = self.s.LIVE_EXIT_SLIPPAGE_BPS if urgent else self.s.MAX_SLIPPAGE_BPS
-        r = await self.swap(mint, SOL_MINT, amount, slippage)
+        r = await self.swap(mint, SOL_MINT, amount, slippage, check_impact=False)
         proceeds_sol = r["sol_delta"] / LAMPORTS
         closed = full
         if closed:

@@ -256,3 +256,19 @@ async def test_monitor_runs_paper_and_live_side_by_side(live):
     chain.fail_execute = False
     await step(live_pos["stop"] * 0.5)                  # retry succeeds
     assert await state.get_position(MINT, "live") is None and chain.tokens is None
+
+
+async def test_sell_is_not_blocked_by_noisy_price_impact(live):
+    b, chain, state = live
+    await b.buy(ITEM, 0.002, 300_000)
+    orig = chain.get_json
+
+    async def noisy(url, params=None, **kw):
+        res = await orig(url, params, **kw)
+        res["priceImpact"] = -11.55
+        return res
+    chain.get_json = noisy
+    _, _, closed = await b.sell(MINT, 1.0, 0.0, "وقف خسارة")
+    assert closed                                   # exit goes through
+    with pytest.raises(RiskBlocked):
+        await b.buy(ITEM, 0.002, 300_000)           # but a new entry on such a quote is refused
