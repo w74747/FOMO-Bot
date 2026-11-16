@@ -25,6 +25,7 @@ GRID = {
     "tp2_factor": [0.85, 1.10],
     "stop_drop_factor": [0.35, 0.50, 0.70],
     "trail_factor": [0.25, 0.40, 0.60],
+    "max_cycle_hours": [72, 120],   # allow coins with 3-5 day cycles?
 }
 MIN_TRADES_A = 12
 MIN_TOKENS_A = 5     # a config must work on several coins, not one lucky chart

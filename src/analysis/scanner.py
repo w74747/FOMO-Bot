@@ -233,7 +233,7 @@ class Scanner:
         if a.stats is None:
             a.reasons.append("not enough candles")
             return a
-        a.score, reasons = score(a.stats, pool.liquidity_usd)
+        a.score, reasons = score(a.stats, pool.liquidity_usd, self.params.max_cycle_hours)
         a.reasons.extend(reasons)
         fee_usd = await self.state.tx_fee_usd(self.s)
         a.plan = build_plan(

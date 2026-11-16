@@ -64,7 +64,7 @@ def backtest(
                 if stats_cache is not None:
                     stats_cache[i] = stats
             # same gate as live: the coin must still pass the wave score filters at this point in time
-            tradeable = bool(stats) and not score(stats, liquidity_usd)[1] and build_plan(
+            tradeable = bool(stats) and not score(stats, liquidity_usd, params.max_cycle_hours)[1] and build_plan(
                 stats.last_high, stats.median_drop, stats.median_rise, stats.avg_cycle_hours,
                 liquidity_usd, position_usd, params, tx_fee_usd) is not None
             if stats and pos is None:
@@ -98,7 +98,7 @@ def backtest(
                     "peak": fill,
                     "trail": trail_pct(stats.median_drop, params),
                     "opened": i,
-                    "time_stop": int(time_stop_hours(stats.avg_cycle_hours)),
+                    "time_stop": int(time_stop_hours(stats.avg_cycle_hours, params.max_cycle_hours)),
                 }
             continue
 

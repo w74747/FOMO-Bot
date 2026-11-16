@@ -100,3 +100,16 @@ def test_slow_waves_rejected_and_time_stop_capped():
     _, reasons = score(st, 300_000)
     assert any("too slow" in r for r in reasons)
     assert time_stop_hours(136) == 48 and time_stop_hours(2) == 6 and time_stop_hours(20) == 30
+
+
+def test_max_cycle_param_lets_optimizer_test_slow_coins():
+    from dataclasses import replace
+    from src.trading.strategy import time_stop_hours
+    st = wave_stats(wave_candles(hours=900, period=100), 0.10)        # ~4-day cycles
+    assert any("too slow" in r for r in score(st, 300_000)[1])
+    assert not any("too slow" in r for r in score(st, 300_000, 120)[1])
+    assert time_stop_hours(100, 120) == 80 and time_stop_hours(100) == 48
+    p = replace(StrategyParams(), max_cycle_hours=120)
+    slow = backtest(wave_candles(hours=900, period=100), 0.10, p, 300_000, 20)
+    fast_only = backtest(wave_candles(hours=900, period=100), 0.10, StrategyParams(), 300_000, 20)
+    assert fast_only.trades == 0 and slow.trades > 0

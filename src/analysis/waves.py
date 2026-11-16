@@ -200,7 +200,7 @@ def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
 MAX_CYCLE_HOURS = 72.0   # the strategy trades waves of hours to ~3 days, not weekly swings
 
 
-def score(stats: WaveStats, liquidity_usd: float) -> tuple[float, list[str]]:
+def score(stats: WaveStats, liquidity_usd: float, max_cycle_hours: float = MAX_CYCLE_HOURS) -> tuple[float, list[str]]:
     """0-100 score of how well a coin fits the 'repeating waves' pattern.
     Returns (score, reasons-for-rejection). A non-empty reasons list means rejected."""
     reasons = []
@@ -212,7 +212,7 @@ def score(stats: WaveStats, liquidity_usd: float) -> tuple[float, list[str]]:
         reasons.append(f"waves too small ({stats.median_drop:.0%})")
     if stats.median_drop > 0.60:
         reasons.append(f"waves too violent ({stats.median_drop:.0%})")
-    if stats.avg_cycle_hours > MAX_CYCLE_HOURS:
+    if stats.avg_cycle_hours > max_cycle_hours:
         reasons.append(f"waves too slow ({stats.avg_cycle_hours:.0f}h cycle)")
     if stats.trend_pct_day < -4:
         reasons.append(f"downtrend {stats.trend_pct_day:.1f}%/day")

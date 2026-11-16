@@ -438,7 +438,8 @@ class TelegramController:
 
     def _format_opt(self, r: dict, secs: float) -> str:
         short = {"zigzag_pct": "zz", "entry_drop_factor": "دخول", "tp1_factor": "هدف1",
-                 "tp2_factor": "تشديد", "stop_drop_factor": "وقف", "trail_factor": "تتبع"}
+                 "tp2_factor": "تشديد", "stop_drop_factor": "وقف", "trail_factor": "تتبع",
+                 "max_cycle_hours": "دورة≤"}
         lines = [
             f"🧪 <b>نتيجة التحسين</b> ({secs:.0f} ث) — {r['configs_tested']} إعداد × {r['tokens']} عملة "
             f"(مجموعة A للاختيار: {r['tokens_a']}، مجموعة B للتحقق: {r['tokens_b']})",
