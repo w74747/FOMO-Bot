@@ -80,17 +80,25 @@ class LiveBroker:
         if balance - lamports < reserve:
             raise RiskBlocked(f"رصيد SOL غير كافٍ ({balance / LAMPORTS:.4f} SOL، الاحتياطي {self.s.LIVE_SOL_RESERVE} SOL)")
 
+        existing = {a["pubkey"] for a in await self.wallet.token_accounts(item["mint"])}
         try:
             r = await self.swap(SOL_MINT, item["mint"], lamports, self.s.MAX_SLIPPAGE_BPS)
         except (SwapFailed, HttpError) as e:
             raise RiskBlocked(f"فشل الشراء الحقيقي: {e}") from e
-        tokens, decimals = await self.wallet.token_balance(item["mint"])
-        tokens = tokens or r["out"]
+        accounts = await self.wallet.token_accounts(item["mint"])
+        tokens = sum(a["amount"] for a in accounts) or r["out"]
+        decimals = accounts[0]["decimals"] if accounts else None
         if not tokens or decimals is None:
             raise RiskBlocked("تم التنفيذ لكن رصيد العملة غير ظاهر بعد؛ راجع المحفظة")
+        # rent locked in a newly created token account comes back when it is closed:
+        # it counts in the cost (PnL) but not in the entry price used for stop/targets
+        rent = 0
+        for a in accounts:
+            if a["pubkey"] not in existing:
+                rent += await self.wallet.account_lamports(a["pubkey"])
         cost_sol = -r["sol_delta"] / LAMPORTS            # includes fees + token-account rent
         cost_usd = cost_sol * self.sol_usd
-        fill = cost_usd / (tokens / 10 ** decimals)
+        fill = (cost_sol - rent / LAMPORTS) * self.sol_usd / (tokens / 10 ** decimals)
         p = params or StrategyParams()
         stop_pct = item.get("stop_pct", 0.1)
         rise = item.get("median_rise", 0.2)
@@ -105,7 +113,8 @@ class LiveBroker:
             "time_stop_at": int(time.time() + item.get("time_stop_hours", 24) * 3600),
             "liquidity_at_entry": liquidity or item.get("liq_baseline"),
             "realized_usd": 0.0, "realized_sol": 0.0, "expected_pct": item.get("bt_avg"),
-            "mode": self.mode, "buy_sig": r["signature"],
+            "mode": self.mode, "buy_sig": r["signature"], "rent_sol": rent / LAMPORTS,
+            "paper_ref_price": price,
         }
         await self.state.save_position(item["mint"], pos, self.book)
         await self.db.log_trade(pos["mint"], pos["symbol"], "BUY", tokens, fill, cost_usd, None, "entry", self.mode)

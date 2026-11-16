@@ -68,6 +68,10 @@ class SolanaWallet:
         res = await self.rpc("getBalance", [self.address, {"commitment": "confirmed"}])
         return int(res["value"])
 
+    async def account_lamports(self, address: str) -> int:
+        res = await self.rpc("getBalance", [address, {"commitment": "confirmed"}])
+        return int(res["value"])
+
     async def token_accounts(self, mint: str) -> list[dict]:
         """All token accounts of this wallet for `mint`: [{pubkey, program, amount(raw int), decimals}]."""
         res = await self.rpc("getTokenAccountsByOwner", [

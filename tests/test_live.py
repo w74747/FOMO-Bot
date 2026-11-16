@@ -48,6 +48,7 @@ class FakeChain:
         self.kp = kp
         self.lamports = lamports
         self.tokens = None          # None = no token account; int = account with balance
+        self.ata = str(Pubkey.new_unique())
         self.rate = price_tokens_per_sol  # raw tokens per lamport-SOL... tokens per 1 SOL (raw)
         self.order = None
         self.fail_execute = False
@@ -82,11 +83,13 @@ class FakeChain:
         # RPC
         m, p = body["method"], body["params"]
         if m == "getBalance":
+            if p[0] != str(self.kp.pubkey()):       # a token account: holds its rent
+                return {"result": {"value": RENT}}
             return {"result": {"value": self.lamports}}
         if m == "getTokenAccountsByOwner":
             if self.tokens is None:
                 return {"result": {"value": []}}
-            return {"result": {"value": [{"pubkey": str(Pubkey.new_unique()), "account": {
+            return {"result": {"value": [{"pubkey": self.ata, "account": {
                 "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
                 "data": {"parsed": {"info": {"tokenAmount": {"amount": str(self.tokens), "decimals": 6}}}}}}]}}
         if m == "getLatestBlockhash":
@@ -154,6 +157,10 @@ async def test_live_round_trip_accounts_fees_and_reclaims_rent(live):
     # cost includes swap + fee + rent: 10$ at 100$/SOL = 0.1 SOL
     assert abs(pos["cost_sol"] - (0.1 + (FEE + RENT) / 1e9)) < 1e-9
     assert pos["decimals"] == 6 and pos["qty"] == chain.tokens
+    assert abs(pos["rent_sol"] - RENT / 1e9) < 1e-12
+    # entry price excludes refundable rent: (0.1 SOL + fee) * 100$ / tokens
+    tokens_ui = pos["qty"] / 1e6
+    assert abs(pos["entry_price"] - (0.1 + FEE / 1e9) * 100 / tokens_ui) < 1e-12
     p2, pnl1, closed = await b.sell(MINT, 0.5, 0.0, "الهدف 1")
     assert not closed and chain.tokens == pos["qty"] - pos["qty"] // 2
     assert chain.order["slippageBps"] == str(settings.MAX_SLIPPAGE_BPS)
