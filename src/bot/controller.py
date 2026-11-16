@@ -207,7 +207,9 @@ class TelegramController:
         lines = ["👀 <b>قائمة المراقبة</b>"]
         for w in sorted(watch.values(), key=lambda x: -x.get("score", 0)):
             cur = prices.get(w["mint"], {}).get("price")
-            if cur:
+            if w.get("status") == "holding":
+                where = f"📂 مركز مفتوح (الآن {fmt_price(cur)})" if cur else "📂 مركز مفتوح"
+            elif cur:
                 gap = cur / w["entry"] - 1
                 where = (f"الآن {fmt_price(cur)} · "
                          + (f"يحتاج هبوط {gap / (1 + gap):.0%} للوصول للدخول" if gap > 0 else "داخل منطقة الشراء"))
