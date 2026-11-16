@@ -4,6 +4,14 @@ from dataclasses import asdict, dataclass, fields, replace
 JUPITER_FEE = 0.001     # ~5-10 bps Jupiter + rounding
 POOL_FEE = 0.0025       # typical DEX pool fee per side
 TX_PER_ROUND_TRIP = 3   # buy, sell half at target 1, sell the rest
+MAX_TIME_STOP_HOURS = 48.0
+
+
+def time_stop_hours(avg_cycle_hours: float) -> float:
+    """1.5 x the coin's typical cycle, between 6 and 48 hours."""
+    if not avg_cycle_hours:
+        return 24.0
+    return min(MAX_TIME_STOP_HOURS, max(6.0, 1.5 * avg_cycle_hours))
 
 
 @dataclass
@@ -124,7 +132,7 @@ def build_plan(
         stop_pct=lv["stop_pct"],
         median_drop=median_drop,
         median_rise=median_rise,
-        time_stop_hours=max(6.0, 1.5 * avg_cycle_hours) if avg_cycle_hours else 24.0,
+        time_stop_hours=time_stop_hours(avg_cycle_hours),
         cost_pct=cost,
         reward_risk=round(rr, 2),
     )

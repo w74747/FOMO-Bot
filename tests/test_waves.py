@@ -92,3 +92,11 @@ def test_network_fees_reduce_backtest_and_plan():
     a = build_plan(1.0, 0.25, 0.35, 36, 300_000, 20, p)
     b = build_plan(1.0, 0.25, 0.35, 36, 300_000, 20, p, tx_fee_usd=0.5)
     assert b is None or b.cost_pct > a.cost_pct
+
+
+def test_slow_waves_rejected_and_time_stop_capped():
+    from src.trading.strategy import time_stop_hours
+    st = wave_stats(wave_candles(hours=720, period=150), 0.10)   # ~6-day cycles
+    _, reasons = score(st, 300_000)
+    assert any("too slow" in r for r in reasons)
+    assert time_stop_hours(136) == 48 and time_stop_hours(2) == 6 and time_stop_hours(20) == 30

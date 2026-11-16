@@ -7,7 +7,8 @@ from dataclasses import asdict, dataclass, field
 
 from src.analysis.waves import score, wave_stats, zigzag
 from src.data.models import Candle
-from src.trading.strategy import StrategyParams, build_plan, levels, side_cost, trail_pct, trailing_stop
+from src.trading.strategy import (StrategyParams, build_plan, levels, side_cost, time_stop_hours, trail_pct,
+                                  trailing_stop)
 
 
 @dataclass
@@ -97,7 +98,7 @@ def backtest(
                     "peak": fill,
                     "trail": trail_pct(stats.median_drop, params),
                     "opened": i,
-                    "time_stop": max(6, int(1.5 * stats.avg_cycle_hours)) if stats.avg_cycle_hours else 24,
+                    "time_stop": int(time_stop_hours(stats.avg_cycle_hours)),
                 }
             continue
 
