@@ -30,6 +30,7 @@ class Monitor:
             self.brokers["live"] = live_broker    # real money, only when /live on
         self._err_at: dict[str, float] = {}
         self._liq_alarm: dict[str, tuple[float, int]] = {}
+        self._liq_unstable_at: dict[str, float] = {}   # mint -> last time a big drop was seen
         self.s = settings
         self.params = StrategyParams.from_settings(settings)
         self.notify = notify
@@ -92,6 +93,7 @@ class Monitor:
         if liq >= base * (1 - self.s.LIQUIDITY_DROP_EXIT_PCT):
             self._liq_alarm.pop(key, None)
             return False
+        self._liq_unstable_at[key.split(":", 1)[-1]] = time.time()
         first, count = self._liq_alarm.get(key, (time.time(), 0))
         count += 1
         self._liq_alarm[key] = (first, count)
@@ -157,6 +159,8 @@ class Monitor:
                 if price > item["entry"] * 1.05:
                     item.update(status="waiting", local_min=None)  # bounced too far, missed it
                     changed = True
+                elif time.time() - self._liq_unstable_at.get(mint, 0) < self.s.LIQUIDITY_ENTRY_BLOCK_MIN * 60:
+                    logger.info(f"entry on {item.get('symbol')} skipped: liquidity was unstable recently")
                 else:
                     await self._enter(item, price, liq)
                     return

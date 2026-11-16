@@ -95,6 +95,7 @@ class Settings(BaseSettings):
     LIQUIDITY_DROP_EXIT_PCT: float = 0.40
     LIQUIDITY_CONFIRM_READS: int = 3       # a drop must persist this many readings…
     LIQUIDITY_CONFIRM_SEC: float = 20.0    # …spanning at least this long (filters data blips)
+    LIQUIDITY_ENTRY_BLOCK_MIN: float = 60.0  # no new entry for this long after ANY big drop reading
 
     @property
     def max_slippage(self) -> float:

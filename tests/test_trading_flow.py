@@ -235,3 +235,21 @@ async def test_strikes_use_trade_history_when_available(env):
     pos = await state.get_position(MINT)
     await step(mon, jup, pos["stop"] * 0.99)
     assert await state.r.ttl(f"fb:cooldown:{MINT}") > 13 * 3600
+
+
+async def test_no_entry_shortly_after_a_liquidity_blip(env):
+    state, db, jup, mon, msgs = env
+    await step(mon, jup, 0.95)                         # baseline 500k
+    orig = jup.prices
+
+    async def blip(mints):
+        return {m: {"price": 0.78, "liquidity": 200_000} for m in mints}
+    jup.prices = blip
+    await mon.tick()                                   # one unconfirmed drop reading (+ armed)
+    jup.prices = orig
+    await step(mon, jup, 0.78)                         # liquidity back to normal
+    await step(mon, jup, 0.80)                         # bounce: would buy, but blocked
+    assert await state.get_position(MINT) is None
+    mon._liq_unstable_at[MINT] -= 3601                 # an hour later…
+    await step(mon, jup, 0.80)
+    assert await state.get_position(MINT) is not None
