@@ -117,13 +117,21 @@ async def main():
         except NotImplementedError:
             pass
 
-    async def regime_once():
-        await asyncio.sleep(90)
-        if db.ready and tg._guard("regime"):
-            await tg.regime_job(send=False)   # result goes to the logs
+    async def realistic_opt_once():
+        """One-off: re-pick the strategy settings on the realistic back-test (the old ones
+        were chosen on wick-inflated results). Applied only if it wins out-of-sample."""
+        await asyncio.sleep(120)
+        if not db.ready or await state.get_meta("opt_realistic_v1"):
+            return
+        if tg._guard("optimize"):
+            await tg.send("🧪 إعادة اختيار الإعدادات على الاختبار الواقعي (بلا ذيول + انتظار الارتداد)… "
+                          "قد يستغرق ذلك بعض الوقت، والتداول مستمر.")
+            await tg._optimize_job(auto_apply=True)
+            if '"realistic": true' in (await state.get_meta("last_opt") or ""):
+                await state.set_meta("opt_realistic_v1", "done")   # only once it really finished
 
     tasks = [
-        asyncio.create_task(regime_once(), name="regime-once"),
+        asyncio.create_task(realistic_opt_once(), name="realistic-opt-once"),
         asyncio.create_task(scanner_loop(scanner, state), name="scanner"),
         asyncio.create_task(monitor.run(), name="monitor"),
         asyncio.create_task(daily_report_loop(db, state, tg.send), name="daily-report"),

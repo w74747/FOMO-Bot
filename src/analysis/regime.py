@@ -76,7 +76,7 @@ def _bucket(trades, key, buckets):
 
 
 def analyze(datasets: list[tuple], params: dict, position_usd: float, fee_usd: float,
-            real_trades: list[dict] | None = None) -> dict:
+            real_trades: list[dict] | None = None, bt_kw: dict | None = None) -> dict:
     """datasets: [(pool, [candle tuples], liquidity)]. real_trades: [{opened_at, ret, mode}]
     with ret in %. Returns plain dicts (picklable)."""
     known = {f.name for f in fields(StrategyParams)}
@@ -87,7 +87,8 @@ def analyze(datasets: list[tuple], params: dict, position_usd: float, fee_usd: f
     trades = []
     for pool, _, liq in datasets:
         log: list = []
-        backtest(series[pool], p.zigzag_pct, p, liq, position_usd, tx_fee_usd=fee_usd, trade_log=log)
+        backtest(series[pool], p.zigzag_pct, p, liq, position_usd, tx_fee_usd=fee_usd, trade_log=log,
+                 **(bt_kw or {}))
         for ts, ret in log:
             rg = regime_at(index, ts)
             trades.append({"pool": pool, "side": split_of(pool), "ts": ts, "ret": ret * 100,

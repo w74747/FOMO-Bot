@@ -11,6 +11,7 @@ from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Upd
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, filters
 
+from src.analysis.backtest import bt_kwargs
 from src.analysis.optimizer import optimize
 from src.bot.reasons import ar_reason
 from src.bot.report import build_report, strategy_closes
@@ -443,7 +444,7 @@ class TelegramController:
             loop = asyncio.get_running_loop()
             with ProcessPoolExecutor(max_workers=1) as ex:
                 result = await loop.run_in_executor(ex, analyze, datasets, asdict(params),
-                                                    self.s.MAX_POSITION_USD, fee_usd, real)
+                                                    self.s.MAX_POSITION_USD, fee_usd, real, bt_kwargs(self.s))
             with ProcessPoolExecutor(max_workers=1) as ex:
                 models = await loop.run_in_executor(ex, entry_models, datasets, asdict(params),
                                                     self.s.MAX_POSITION_USD, fee_usd)
@@ -462,7 +463,7 @@ class TelegramController:
         finally:
             self._busy.discard("regime")
 
-    async def _optimize_job(self):
+    async def _optimize_job(self, auto_apply: bool = False):
         try:
             pools = await self.db.tracked_pools(min_candles=400)
             if len(pools) < 10:
@@ -479,9 +480,18 @@ class TelegramController:
             fee_usd = await self.state.tx_fee_usd(self.s)
             with ProcessPoolExecutor(max_workers=1) as ex:
                 result = await loop.run_in_executor(ex, optimize, datasets, asdict(params), self.s.MAX_POSITION_USD,
-                                                    None, fee_usd)
+                                                    None, fee_usd, bt_kwargs(self.s))
             await self.state.set_meta("last_opt", json.dumps(result))
-            await self.send(self._format_opt(result, time.time() - started))
+            text = self._format_opt(result, time.time() - started)
+            if auto_apply and result.get("recommend"):
+                chosen = result["top"][result["recommend"] - 1]["params"]
+                await self.state.set_param_overrides({k: v for k, v in chosen.items() if k in PARAM_NAMES})
+                text += (f"\n\n✅ <b>طُبّق تلقائياً الإعداد #{result['recommend']}</b> (أفضل على النصف B "
+                         "الذي لم يُستخدم في الاختيار، وليس أسوأ على A). للتراجع: /resetparams")
+            elif auto_apply:
+                text += "\n\nℹ️ لا يوجد إعداد أفضل بشكل موثوق من الحالي على الاختبار الواقعي: لم يتغير شيء."
+            logger.info("OPTIMIZE RESULT\n" + text)
+            await self.send(text)
         except Exception as e:
             logger.exception("optimize failed")
             await self.send(f"❌ فشل التحسين: {escape(str(e))}")

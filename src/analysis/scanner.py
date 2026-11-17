@@ -7,7 +7,7 @@ from typing import Awaitable, Callable
 
 from loguru import logger
 
-from src.analysis.backtest import BacktestResult, backtest
+from src.analysis.backtest import BacktestResult, backtest, bt_kwargs
 from src.analysis.waves import WaveStats, clean_candles, score, wave_stats
 from src.data.geckoterminal import QUOTE_SYMBOLS, GeckoClient
 from src.data.http import HttpError
@@ -170,7 +170,24 @@ class Scanner:
                     tokens += await self.jupiter.top_tokens(cat, interval, 100)
                 except HttpError as e:
                     logger.warning(f"Jupiter {cat}/{interval} failed: {e}")
-        return tokens
+        return tokens + await self.known_tokens({t["mint"] for t in tokens})
+
+    async def known_tokens(self, exclude: set[str]) -> list[dict]:
+        """Coins we already hold candle history for. Many drop out of Jupiter's top lists only
+        because trading went quiet for a while; their waves may still be fine. Fresh Jupiter
+        data (liquidity, holders, audit) for up to 100 mints costs one request."""
+        if not (getattr(self.s, "KNOWN_COINS_RECHECK", False) and getattr(self.db, "ready", False) and self.jupiter):
+            return []
+        try:
+            mints = list(dict.fromkeys(r["mint"] for r in await self.db.tracked_pools(min_candles=300)
+                                       if r["mint"] not in exclude))
+            out = await self.jupiter.token_info(mints) if mints else []
+        except Exception as e:
+            logger.warning(f"known-coins recheck failed: {e}")
+            return []
+        out = [t for t in out if t["mint"] not in exclude]
+        logger.info(f"known coins rechecked: {len(out)} of {len(mints)} still listed")
+        return out
 
     async def candidates(self) -> tuple[int, list[tuple[PoolInfo, dict | None]], dict[str, int]]:
         """Returns (n_seen, [(pool, jupiter_token_or_None)], rejected_counts)."""
@@ -243,7 +260,7 @@ class Scanner:
         if a.plan is None and not a.reasons:
             a.reasons.append("reward/risk too low after costs")
         a.bt = backtest(candles, self.params.zigzag_pct, self.params, pool.liquidity_usd, self.s.MAX_POSITION_USD,
-                        tx_fee_usd=fee_usd)
+                        tx_fee_usd=fee_usd, **bt_kwargs(self.s))
         if a.bt.trades < self.s.MIN_BT_TRADES:
             a.reasons.append(f"not enough backtest evidence ({a.bt.trades} trades)")
         elif a.bt.total_return_pct < 0:

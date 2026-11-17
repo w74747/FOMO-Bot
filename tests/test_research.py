@@ -269,3 +269,29 @@ def test_optimizer_does_not_recommend_when_A_and_B_disagree():
     assert pick([alt, better], cur) == 2     # better on both -> recommend
     import inspect
     assert "r.a.total_lcb_pct >= current.a.total_lcb_pct" in inspect.getsource(opt.optimize)
+
+
+async def test_known_coins_are_rechecked():
+    from src.analysis.scanner import Scanner
+
+    class DB:
+        ready = True
+
+        async def tracked_pools(self, min_candles=300):
+            return [{"mint": "OLD1"}, {"mint": "OLD2"}, {"mint": "HOT"}]
+
+    class J:
+        asked = None
+
+        async def top_tokens(self, cat, interval, limit):
+            return [{"mint": "HOT", "symbol": "HOT"}]
+
+        async def token_info(self, mints):
+            J.asked = mints
+            return [{"mint": m, "symbol": m} for m in mints]
+
+    import fakeredis.aioredis as fr
+    sc = Scanner(None, None, StateManager(client=fr.FakeRedis(decode_responses=True)), DB(), settings, jupiter=J())
+    toks = await sc.discover_tokens()
+    assert J.asked == ["OLD1", "OLD2"]                      # one batch, without coins already found
+    assert [t["mint"] for t in toks].count("HOT") == 12 and {"OLD1", "OLD2"} <= {t["mint"] for t in toks}

@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     # --- Scanner (which coins qualify) ---
     SCAN_INTERVAL_MIN: int = 240
     SCAN_POOL_PAGES: int = 5
-    DISCOVERY_INTERVALS: str = "24h,6h,1h"   # Jupiter top-list windows (no CoinGecko quota)
+    DISCOVERY_INTERVALS: str = "24h,6h,1h,5m"   # Jupiter top-list windows (no CoinGecko quota)
     MIN_TOKEN_AGE_DAYS: float = 7.0
     MIN_LIQUIDITY_USD: float = 75_000
     MIN_VOLUME_24H_USD: float = 100_000
@@ -95,6 +95,11 @@ class Settings(BaseSettings):
     JUPITER_RPM: int = 55             # account budget per 60s (free plan = 60); 600 on Developer
     JUPITER_SCAN_RESERVE: int = 15    # slots per minute scans may never use (monitor at 2s needs ~30)
     BOUNCE_CONFIRM_PCT: float = 0.02  # buy only after a 2% bounce off the local low
+    # realistic back-test (coin selection + optimiser): model the bounce entry, the measured
+    # polling delay, and count candle wicks only against us (they rarely show in Jupiter's price)
+    BT_REALISTIC: bool = True
+    BT_ENTRY_SLIP: float = 0.007
+    KNOWN_COINS_RECHECK: bool = True  # re-check every coin with stored history on each scan
     LIQUIDITY_DROP_EXIT_PCT: float = 0.40
     LIQUIDITY_CONFIRM_READS: int = 3       # a drop must persist this many readings…
     LIQUIDITY_CONFIRM_SEC: float = 20.0    # …spanning at least this long (filters data blips)

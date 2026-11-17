@@ -28,6 +28,13 @@ class BacktestResult:
         return d
 
 
+def bt_kwargs(settings) -> dict:
+    """Back-test options matching live execution (empty = the old optimistic model)."""
+    if not getattr(settings, "BT_REALISTIC", False):
+        return {}
+    return {"bounce_pct": settings.BOUNCE_CONFIRM_PCT, "entry_slip": settings.BT_ENTRY_SLIP, "body_only": True}
+
+
 def _bounce_entry(bar, lv, bounce, slip, armed_low):
     """Live entry on hourly bars. Returns (fill, low_after_fill) when bought, ("cancel", None)
     when the stop broke first, or (None, lowest_price_so_far) while still waiting.
