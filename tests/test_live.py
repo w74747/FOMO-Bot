@@ -272,3 +272,18 @@ async def test_sell_is_not_blocked_by_noisy_price_impact(live):
     assert closed                                   # exit goes through
     with pytest.raises(RiskBlocked):
         await b.buy(ITEM, 0.002, 300_000)           # but a new entry on such a quote is refused
+
+
+async def test_live_levels_follow_the_signal_not_the_fill(live):
+    from src.trading.broker import PaperBroker
+    from src.trading.strategy import StrategyParams
+    b, chain, state = live
+    chain.rate *= 0.98                      # live fill ~2% worse than the signal price
+    signal = 1e-4 * 0.5 / 0.5               # any price; paper uses the same formula
+    p = StrategyParams.from_settings(settings)
+    live_pos = await b.buy(ITEM, signal, 300_000, p)
+    paper = PaperBroker(StateManager(client=fakeredis.aioredis.FakeRedis(decode_responses=True)), DB(), settings)
+    paper_pos = await paper.buy(ITEM, signal, 300_000, p)
+    for k in ("stop", "tp1", "tp2"):
+        assert abs(live_pos[k] / paper_pos[k] - 1) < 0.01   # same exit levels (fees differ slightly)
+    assert live_pos["entry_price"] != live_pos["signal_ref"]   # PnL basis is the real fill

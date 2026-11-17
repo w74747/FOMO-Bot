@@ -11,7 +11,7 @@ from loguru import logger
 
 from src.data.http import Http, HttpError
 from src.trading.broker import RiskBlocked, check_risk
-from src.trading.strategy import StrategyParams, trail_pct
+from src.trading.strategy import StrategyParams, side_cost, trail_pct
 from src.trading.wallet import LAMPORTS, SolanaWallet, sign_versioned
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
@@ -107,12 +107,16 @@ class LiveBroker:
         p = params or StrategyParams()
         stop_pct = item.get("stop_pct", 0.1)
         rise = item.get("median_rise", 0.2)
+        # Exit levels come from the SIGNAL (same formula as the paper book), not from our fill:
+        # a worse fill must not move the targets away (CBUCKS live missed target 1 by 1.2%).
+        # The real fill stays the PnL basis and the floor of the trailing stop.
+        ref = price * (1 + side_cost(size_usd, liquidity or item.get("liquidity") or 0))
         pos = {
             "mint": item["mint"], "symbol": item.get("symbol", "?"),
             "qty": tokens, "remaining_qty": tokens, "decimals": decimals,
-            "entry_price": fill, "cost_usd": cost_usd, "cost_sol": cost_sol,
-            "stop": fill * (1 - stop_pct), "tp1": fill * (1 + rise * p.tp1_factor),
-            "tp2": fill * (1 + rise * p.tp2_factor), "tp1_hit": False, "peak": fill,
+            "entry_price": fill, "cost_usd": cost_usd, "cost_sol": cost_sol, "signal_ref": ref,
+            "stop": ref * (1 - stop_pct), "tp1": ref * (1 + rise * p.tp1_factor),
+            "tp2": ref * (1 + rise * p.tp2_factor), "tp1_hit": False, "peak": max(fill, ref),
             "trail_pct": trail_pct(item.get("median_drop", 0.2), p),
             "opened_at": int(time.time()),
             "time_stop_at": int(time.time() + item.get("time_stop_hours", 24) * 3600),
