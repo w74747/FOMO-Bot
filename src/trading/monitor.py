@@ -265,7 +265,10 @@ class Monitor:
                     f"{p.get('trail_pct', 0.08):.0%} تحت أعلى سعر (لا يقل عن سعر الدخول). الوقف الآن {fmt_price(p['stop'])}")
             return
         if not pos["tp1_hit"] and now >= pos["time_stop_at"]:
-            await self._exit(mint, 1.0, price, "وقف زمني", liq, item, broker)
+            # a losing time stop means the wave did not come back: rest the coin like a stop-loss
+            # (mihao was re-bought one minute after a losing time stop and then hit its stop)
+            losing = price < pos["entry_price"]
+            await self._exit(mint, 1.0, price, "وقف زمني", liq, item, broker, cooldown=losing)
             return
         if dirty:
             await self.state.save_position(mint, pos, book)

@@ -253,3 +253,17 @@ async def test_no_entry_shortly_after_a_liquidity_blip(env):
     mon._liq_unstable_at[MINT] -= 3601                 # an hour later…
     await step(mon, jup, 0.80)
     assert await state.get_position(MINT) is not None
+
+
+async def test_losing_time_stop_rests_the_coin(env):
+    state, db, jup, mon, msgs = env
+    await step(mon, jup, 0.78)
+    await step(mon, jup, 0.80)                     # buy
+    pos = await state.get_position(MINT)
+    pos["time_stop_at"] = 0                        # time is up
+    await state.save_position(MINT, pos)
+    await step(mon, jup, pos["entry_price"] * 0.97)  # below entry, above the stop
+    assert await state.get_position(MINT) is None
+    assert db.closed[-1][1] == "وقف زمني"
+    assert MINT not in await state.get_watchlist()  # no instant re-buy
+    assert await state.r.ttl(f"fb:cooldown:{MINT}") > 0
