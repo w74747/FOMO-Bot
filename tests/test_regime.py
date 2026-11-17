@@ -43,4 +43,14 @@ def test_bounce_entry_model():
     assert backtest(cs, p.zigzag_pct, p, 300_000, 20, bounce_pct=0.02, entry_slip=0.01).trades > 0
     ds = [(f"pool{i}", [tuple(c) for c in wave_candles(hours=700, period=30 + i)], 300_000) for i in range(4)]
     rows = entry_models(ds, asdict(p), 20, 0.02)
-    assert len(rows) == 6 and rows[0]["all"]["n"] > 0
+    assert len(rows) == 9 and rows[0]["all"]["n"] > 0
+
+
+def test_body_only_runs():
+    from src.analysis.backtest import backtest
+    p = StrategyParams.from_settings(settings)
+    for period in (28, 33, 40):
+        cs = wave_candles(hours=700, period=period)
+        full = backtest(cs, p.zigzag_pct, p, 300_000, 20, bounce_pct=0.02, entry_slip=0.007)
+        body = backtest(cs, p.zigzag_pct, p, 300_000, 20, bounce_pct=0.02, entry_slip=0.007, body_only=True)
+        assert full.trades > 0 and body.trades >= 0

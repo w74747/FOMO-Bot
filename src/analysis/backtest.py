@@ -68,11 +68,16 @@ def backtest(
     trade_log: list | None = None,
     bounce_pct: float | None = None,
     entry_slip: float = 0.0,
+    body_only: bool = False,
 ) -> BacktestResult:
     """`bounce_pct` (optional) models the live entry: after the price touches the entry level the
     bot waits for a bounce of `bounce_pct` off the lowest price since, then buys `entry_slip`
     higher (polling delay). Hourly bars hide the order of high and low, so ambiguous bars are
     resolved against us. None = the original "buy at the entry level" model.
+
+    `body_only`: events in our favour (touching the entry zone, the bounce low, target 1, the
+    trailing peak) only count inside the candle body (open..close); wicks still hit stops.
+    A wick is often one trade on one pool that the aggregated live price never shows.
 
     `stats_cache` (optional) memoises wave stats per refit bar; it is only valid for one
     candle series and one zigzag pct, and lets the optimiser reuse work across parameter sets."""
@@ -92,6 +97,7 @@ def backtest(
 
     for i in range(warmup, len(candles)):
         bar = candles[i]
+        fb = Candle(bar.ts, bar.o, max(bar.o, bar.c), min(bar.o, bar.c), bar.c, bar.v) if body_only else bar
         if (i - warmup) % refit_every == 0 or stats is None:
             if stats_cache is not None and i in stats_cache:
                 stats = stats_cache[i]
@@ -121,13 +127,22 @@ def backtest(
             fill = None
             same_bar_low = None          # a low that happened AFTER the fill inside this bar
             if bounce_pct is None:
-                if bar.l <= lv["entry"]:
+                if fb.l <= lv["entry"]:
                     fill = min(lv["entry"], bar.o)
                     if fill <= lv["stop"]:
                         blocked_until_new_high = True
                         continue
+                    if body_only and bar.l < fb.l:
+                        same_bar_low = bar.l         # the wick below came after the fill (against us)
             else:
-                fill, same_bar_low = _bounce_entry(bar, lv, bounce_pct, entry_slip, armed_low)
+                was_armed = armed_low is not None
+                fill, same_bar_low = _bounce_entry(fb, lv, bounce_pct, entry_slip, armed_low)
+                if body_only and fill != "cancel" and (was_armed or fill is not None or same_bar_low is not None) \
+                        and bar.l <= lv["stop"]:
+                    if fill is None:
+                        fill = "cancel"              # the wick broke the stop while we waited
+                    else:
+                        same_bar_low = bar.l         # bought, then the wick hit the stop
                 if fill == "cancel":                     # stop broken before any bounce
                     armed_low, blocked_until_new_high = None, True
                     continue
@@ -168,7 +183,7 @@ def backtest(
             pos["realized"] += part * ((px - e) / e - 2 * cost_side) - fee
             closed = True
         elif not pos["half"]:
-            if bar.h >= pos["tp1"]:
+            if fb.h >= pos["tp1"]:
                 pos["realized"] += 0.5 * ((pos["tp1"] - e) / e - 2 * cost_side) - fee
                 pos["half"] = True
                 pos["peak"] = pos["tp1"]
@@ -177,7 +192,7 @@ def backtest(
                 pos["realized"] += (bar.c - e) / e - 2 * cost_side - fee
                 closed = True
         else:
-            pos["peak"] = max(pos["peak"], bar.h)
+            pos["peak"] = max(pos["peak"], fb.h)
             pos["stop"] = trailing_stop(pos["stop"], e, pos["peak"], pos["tp2"], pos["trail"])
         if closed:
             returns.append(pos["realized"])

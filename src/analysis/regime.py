@@ -166,12 +166,15 @@ def format_report(r: dict) -> str:
 
 
 ENTRY_MODELS = [
-    ("الاختبار الحالي (شراء عند نقطة الدخول)", None, 0.0),
-    ("ارتداد 2% بلا تأخير", 0.02, 0.0),
-    ("ارتداد 2% + تأخير 0.7% (المقاس في GTA)", 0.02, 0.007),
-    ("ارتداد 2% + تأخير 2%", 0.02, 0.02),
-    ("ارتداد 1% + تأخير 0.7%", 0.01, 0.007),
-    ("ارتداد 3% + تأخير 0.7%", 0.03, 0.007),
+    ("الاختبار الحالي (شراء عند نقطة الدخول)", None, 0.0, False),
+    ("ارتداد 2% بلا تأخير", 0.02, 0.0, False),
+    ("ارتداد 2% + تأخير 0.7% (المقاس في GTA)", 0.02, 0.007, False),
+    ("ارتداد 2% + تأخير 2%", 0.02, 0.02, False),
+    ("ارتداد 1% + تأخير 0.7%", 0.01, 0.007, False),
+    ("ارتداد 3% + تأخير 0.7%", 0.03, 0.007, False),
+    ("الحالي بلا ذيول (جسم الشمعة فقط لصالحنا)", None, 0.0, True),
+    ("ارتداد 2% + تأخير 0.7% بلا ذيول", 0.02, 0.007, True),
+    ("ارتداد 1% + تأخير 0.7% بلا ذيول", 0.01, 0.007, True),
 ]
 
 
@@ -182,11 +185,11 @@ def entry_models(datasets: list[tuple], params: dict, position_usd: float, fee_u
     p = StrategyParams(**{k: v for k, v in params.items() if k in known})
     series = [(pool, clean_candles([Candle(*c) for c in cs]), liq) for pool, cs, liq in datasets]
     out = []
-    for name, bounce, slip in ENTRY_MODELS:
+    for name, bounce, slip, body in ENTRY_MODELS:
         per = {"A": [], "B": []}
         for pool, cs, liq in series:
             r = backtest(cs, p.zigzag_pct, p, liq, position_usd, tx_fee_usd=fee_usd,
-                         bounce_pct=bounce, entry_slip=slip)
+                         bounce_pct=bounce, entry_slip=slip, body_only=body)
             per[split_of(pool)] += [x * 100 for x in r.returns]
         out.append({"name": name, "all": _stats(per["A"] + per["B"]),
                     "a": _stats(per["A"]), "b": _stats(per["B"])})
