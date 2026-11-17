@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS closed_positions (
 CREATE INDEX IF NOT EXISTS idx_closed_time ON closed_positions (closed_at);
 ALTER TABLE closed_positions ADD COLUMN IF NOT EXISTS entry_gap_pct DOUBLE PRECISION;
 ALTER TABLE closed_positions ADD COLUMN IF NOT EXISTS exit_gap_pct DOUBLE PRECISION;
+ALTER TABLE closed_positions ADD COLUMN IF NOT EXISTS tier TEXT;
 """
 
 
@@ -178,13 +179,14 @@ class Database:
             ret = pos["realized_usd"] / pos["cost_usd"] * 100 if pos.get("cost_usd") else 0.0
             await self.pool.execute(
                 "INSERT INTO closed_positions (mint, symbol, opened_at, cost_usd, pnl_usd, return_pct, "
-                "exit_reason, expected_pct, mode, entry_gap_pct, exit_gap_pct) "
-                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                "exit_reason, expected_pct, mode, entry_gap_pct, exit_gap_pct, tier) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
                 pos["mint"], pos.get("symbol"),
                 datetime.fromtimestamp(pos.get("opened_at", 0), tz=timezone.utc),
                 pos.get("cost_usd"), pos["realized_usd"], ret, exit_reason,
                 pos.get("expected_pct"), pos.get("mode", "paper"),
                 pos.get("entry_gap_pct"), pos.get("exit_gap_pct"),
+                "low_liq" if pos.get("paper_only") else None,
             )
         except Exception as e:
             logger.error(f"save_closed_position failed: {e}")

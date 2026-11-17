@@ -125,8 +125,14 @@ def _paper_progress(day: dict, tot: dict, dd: float, manual: int) -> list[str]:
 
 
 async def build_report(db, state, settings, hours: float = 24) -> str:
-    day_rows = strategy_closes(await db.closed_positions(since_hours=hours))
+    def main_tier(rows):
+        return [r for r in rows if r.get("tier") != "low_liq"]
+    raw_day = strategy_closes(await db.closed_positions(since_hours=hours))
     raw_every = await db.closed_positions()
+    low_all = [r for r in strategy_closes(raw_every) if r.get("tier") == "low_liq"]
+    low_day = [r for r in raw_day if r.get("tier") == "low_liq"]
+    day_rows = main_tier(raw_day)
+    raw_every = main_tier(raw_every)
     every = strategy_closes(raw_every)
     manual = len(raw_every) - len(every)
     live_rows = [r for r in every if r.get("mode") == "live"]
@@ -150,6 +156,15 @@ async def build_report(db, state, settings, hours: float = 24) -> str:
             lines.append(f"{tot['n']} صفقة · نسبة الفوز {tot['wins'] / tot['n']:.0%} · أكبر تراجع {dd:.1f}%{exp_txt}")
     else:
         lines += _paper_progress(day, tot, dd, manual)
+    if low_all:
+        lines.append("")
+        lines.append("🧪 <b>تجربة السيولة المنخفضة (ورقي فقط، 20 ألف إلى 50 ألف دولار)</b>")
+        lines.append(_line(f"• آخر {hours:.0f} ساعة", summarize(low_day)))
+        lines.append(_line("• الإجمالي", summarize(low_all)))
+        if every:
+            ref = summarize([r for r in every if (r.get("mode") or "paper") == "paper"])
+            if ref["n"]:
+                lines.append(f"• للمقارنة، الورقي على العملات العادية: متوسط {ref['avg_ret']:+.1f}%")
     lines.append("")
     lines.append(
         f"💼 الرصيد الورقي: {balance:,.2f}$ · مراكز مفتوحة: {len(positions)} · قائمة المراقبة: {len(watch)}")

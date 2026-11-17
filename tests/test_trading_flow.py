@@ -278,3 +278,41 @@ async def test_entry_and_exit_gaps_are_recorded(env):
     await step(mon, jup, pos["stop"] * 0.97)       # reading 3% under the stop
     closed, reason = db.closed[-1]
     assert reason == "وقف خسارة" and abs(closed["exit_gap_pct"] + 3.0) < 1e-6
+
+
+async def test_low_liquidity_coins_trade_on_paper_only_and_stay_silent(env):
+    state, db, jup, mon, msgs = env
+
+    class Live:
+        book = "live"
+        bought = 0
+
+        async def enabled(self):
+            return True
+
+        async def buy(self, *a, **k):
+            Live.bought += 1
+            raise AssertionError("live must not buy paper-only coins")
+
+    mon.brokers["live"] = Live()
+    await state.set_watch_item(MINT, {**watch_item(), "paper_only": True})
+    await step(mon, jup, 0.78)
+    await step(mon, jup, 0.80)
+    pos = await state.get_position(MINT)
+    assert pos and pos["paper_only"] and Live.bought == 0
+    assert msgs == []                                  # armed + buy messages are silent
+    await step(mon, jup, pos["stop"] * 0.97)
+    assert db.closed[-1][0]["paper_only"] and msgs == []
+
+
+def test_prefilter_marks_low_liquidity_as_paper_only():
+    from src.analysis.scanner import prefilter_tokens
+    base = {"symbol": "X", "name": "", "price": 1, "age_days": 30, "volume_24h": 1e6, "holders": 5000,
+            "organic_score": 90, "top_holders_pct": 0.1, "mint_disabled": True, "freeze_disabled": True,
+            "is_sus": False, "fdv": 1e6, "price_change_24h": 0, "verified": False}
+    toks = [{**base, "mint": "BIG", "liquidity": 200_000}, {**base, "mint": "MID", "liquidity": 30_000},
+            {**base, "mint": "TINY", "liquidity": 5_000}]
+    kept, rej = prefilter_tokens(toks, settings)
+    by = {t["mint"]: t for t in kept}
+    assert set(by) == {"BIG", "MID"} and by["MID"]["paper_only"] and not by["BIG"]["paper_only"]
+    assert [t["mint"] for t in kept] == ["BIG", "MID"] and rej.get("low liquidity") == 1

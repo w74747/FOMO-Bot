@@ -41,6 +41,7 @@ class Analysis:
     bt: BacktestResult | None = None
     safety: dict = field(default_factory=dict)
     top10: float | None = None
+    paper_only: bool = False     # low-liquidity experiment: paper book only
 
     @property
     def accepted(self) -> bool:
@@ -105,7 +106,7 @@ def prefilter_tokens(tokens: list[dict], s) -> tuple[list[dict], dict[str, int]]
             rej("freeze authority active")
         elif t["age_days"] < s.MIN_TOKEN_AGE_DAYS:
             rej("too young")
-        elif t["liquidity"] < s.MIN_LIQUIDITY_USD:
+        elif t["liquidity"] < min(s.MIN_LIQUIDITY_USD, getattr(s, "PAPER_ONLY_MIN_LIQUIDITY_USD", 0) or s.MIN_LIQUIDITY_USD):
             rej("low liquidity")
         elif t["volume_24h"] < s.MIN_VOLUME_24H_USD:
             rej("low volume")
@@ -118,8 +119,9 @@ def prefilter_tokens(tokens: list[dict], s) -> tuple[list[dict], dict[str, int]]
         elif t["top_holders_pct"] is not None and t["top_holders_pct"] > s.MAX_TOP10_HOLDER_PCT:
             rej("concentrated holders")
         else:
-            kept[t["mint"]] = t
-    ranked = sorted(kept.values(), key=lambda t: t["volume_24h"], reverse=True)
+            kept[t["mint"]] = {**t, "paper_only": t["liquidity"] < s.MIN_LIQUIDITY_USD}
+    # real-money candidates first, then the paper-only experiment, each by volume
+    ranked = sorted(kept.values(), key=lambda t: (t["paper_only"], -t["volume_24h"]))
     return ranked, rejected
 
 
@@ -235,6 +237,7 @@ class Scanner:
         a = Analysis(pool=pool)
         if token is not None:
             a.top10 = token.get("top_holders_pct")
+            a.paper_only = bool(token.get("paper_only"))
         a.safety = await self.safety.mint_check(pool.mint)
         if not a.safety.get("ok", True):
             a.reasons.extend(a.safety["reasons"])
@@ -370,7 +373,10 @@ class Scanner:
             manual_ok = [a for a in self._manual_results if a.accepted]
             auto_ok = sorted((a for a in results if a.accepted and a not in manual_ok),
                              key=lambda a: a.score, reverse=True)
-            accepted = manual_ok + auto_ok[: self.s.WATCHLIST_SIZE]   # user coins come on top
+            real_ok = [a for a in auto_ok if not a.paper_only]
+            paper_ok = [a for a in auto_ok if a.paper_only]
+            accepted = (manual_ok + real_ok[: self.s.WATCHLIST_SIZE]   # user coins come on top
+                        + paper_ok[: getattr(self.s, "PAPER_ONLY_WATCH_SIZE", 0)])
             accepted = await self._update_watchlist(accepted)
             await self.state.mark_scan()
             logger.info(f"Scan done in {time.time() - started:.0f}s: {len(accepted)} on watchlist")
@@ -409,6 +415,7 @@ class Scanner:
             "added_at": prev.get("added_at", now),
             "liq_baseline": prev.get("liq_baseline"),
             "manual": manual or prev.get("manual", False),
+            "paper_only": bool(a.paper_only) and not (manual or prev.get("manual", False)),
             "updated_at": now,
         }
 
@@ -478,14 +485,16 @@ class Scanner:
             f"عملات مفحوصة: {n_pools} · اجتازت الفلاتر: {n_kept} · حُللت: {len(results)} · "
             f"في قائمة المراقبة: <b>{len(accepted)}</b> ({secs:.0f} ث)",
         ]
-        for a in accepted[:10]:
+        for a in accepted[:16]:
             st, bt = a.stats, a.bt
-            star = "⭐ " if a in self._manual_results else ""
+            star = "⭐ " if a in self._manual_results else ("🧪 " if a.paper_only else "")
             lines.append(
                 f"• {star}<b>{escape(a.pool.symbol)}</b> تقييم {a.score:.0f} | موجات {st.n_cycles} | دورة ~{st.avg_cycle_hours:.0f}س | "
                 f"هبوط {st.median_drop:.0%} / صعود {st.median_rise:.0%} | "
                 f"اختبار تاريخي: {bt.trades} صفقات {bt.total_return_pct:+.1f}%"
             )
+        if any(a.paper_only for a in accepted):
+            lines.append("🧪 = سيولة أقل من الحد: تُتداول ورقياً فقط (تجربة)")
         if prefilter_rejected:
             lines.append("مستبعدة في الفلترة الأولية: " + "، ".join(
                 f"{escape(ar_reason(k))} ×{v}" for k, v in sorted(prefilter_rejected.items(), key=lambda x: -x[1])[:6]))

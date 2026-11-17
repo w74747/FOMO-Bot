@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     DISCOVERY_INTERVALS: str = "24h,6h,1h,5m"   # Jupiter top-list windows (no CoinGecko quota)
     MIN_TOKEN_AGE_DAYS: float = 7.0
     MIN_LIQUIDITY_USD: float = 75_000
+    # experiment: coins with liquidity between this and MIN_LIQUIDITY_USD are traded on PAPER
+    # only (same safety filters), to learn whether smaller coins are worth trading for real
+    PAPER_ONLY_MIN_LIQUIDITY_USD: float = 20_000   # 0 disables the experiment
+    PAPER_ONLY_MAX_OPEN: int = 4
+    PAPER_ONLY_WATCH_SIZE: int = 10
     MIN_VOLUME_24H_USD: float = 100_000
     MAX_FDV_USD: float = 300_000_000
     MAX_TOP10_HOLDER_PCT: float = 0.40   # Jupiter audit.topHoldersPercentage

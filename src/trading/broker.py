@@ -55,6 +55,11 @@ class PaperBroker:
         reason = await check_risk(self.state, self.s, item["mint"])
         if reason:
             raise RiskBlocked(reason)
+        if item.get("paper_only"):
+            cap = getattr(self.s, "PAPER_ONLY_MAX_OPEN", 4)
+            held = sum(1 for p in (await self.state.get_positions("paper")).values() if p.get("paper_only"))
+            if held >= cap:
+                raise RiskBlocked(f"حد صفقات تجربة السيولة المنخفضة ({cap})")
         balance = await self.state.get_balance(self.s.PAPER_START_BALANCE_USD)
         size = min(self.s.MAX_POSITION_USD, balance)
         if size < 1:
@@ -89,6 +94,7 @@ class PaperBroker:
             "realized_usd": 0.0,
             "expected_pct": item.get("bt_avg"),
             "mode": self.mode,
+            "paper_only": bool(item.get("paper_only")),
         }
         await self.state.add_balance(-size)
         await self.state.save_position(item["mint"], pos)

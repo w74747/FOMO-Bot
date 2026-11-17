@@ -154,8 +154,10 @@ async def test_report_compares_live_and_paper():
             {"pnl_usd": -1.0, "return_pct": -5.0, "closed_at": now, "mode": "live",
              "entry_gap_pct": 3.0, "exit_gap_pct": -1.5},
             {"pnl_usd": 2.2, "return_pct": 11.0, "closed_at": now, "mode": "paper"},
-            {"pnl_usd": -0.8, "return_pct": -4.0, "closed_at": now, "mode": "paper"}]
+            {"pnl_usd": -0.8, "return_pct": -4.0, "closed_at": now, "mode": "paper"},
+            {"pnl_usd": 9.0, "return_pct": 45.0, "closed_at": now, "mode": "paper", "tier": "low_liq"}]
     txt = await build_report(FakeDB(rows), state, settings)
+    assert "تجربة السيولة المنخفضة" in txt and "+45.0%" in txt
     assert txt.index("الحقيقي") < txt.index("الورقي في نفس الفترة")
     assert "+1.00$" in txt and "+1.40$" in txt and "الفرق في متوسط الصفقة: -1.0" in txt
     assert "مرجع صامت" in txt and "3 صفقة" in txt

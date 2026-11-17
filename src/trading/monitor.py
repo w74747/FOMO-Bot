@@ -128,7 +128,7 @@ class Monitor:
         if self._liquidity_collapsed(f"w:{mint}", liq, base):
             await self.state.remove_watch_item(mint)
             await self.state.set_cooldown(mint, self.s.LIQUIDITY_BAN_HOURS)
-            await self.notify(f"⚠️ <b>{sym}</b>: السيولة انخفضت بشدة ({base:,.0f}$ ← {liq:,.0f}$). أُزيلت ومُنعت لمدة {self.s.LIQUIDITY_BAN_HOURS:.0f} ساعة.")
+            await self._notify_item(item, f"⚠️ <b>{sym}</b>: السيولة انخفضت بشدة ({base:,.0f}$ ← {liq:,.0f}$). أُزيلت ومُنعت لمدة {self.s.LIQUIDITY_BAN_HOURS:.0f} ساعة.")
             return
 
         # new high -> move the whole plan up
@@ -146,7 +146,7 @@ class Monitor:
         if status == "waiting" and price <= item["entry"]:
             item.update(status="armed", local_min=price)
             changed = True
-            await self.notify(
+            await self._notify_item(item, 
                 f"🎯 <b>{sym}</b> دخلت منطقة الشراء عند {fmt_price(price)} "
                 f"(هبوط {1 - price / item['ref_high']:.0%} من القمة). بانتظار تأكيد الارتداد…")
         elif status == "armed":
@@ -156,7 +156,7 @@ class Monitor:
             if price <= item["stop"]:
                 await self.state.remove_watch_item(mint)
                 await self.state.set_cooldown(mint, self.s.STOP_COOLDOWN_HOURS)
-                await self.notify(f"🧊 <b>{sym}</b> كسرت مستوى الوقف قبل الدخول، الموجة غير صالحة. تهدئة {self.s.STOP_COOLDOWN_HOURS:.0f} ساعة.")
+                await self._notify_item(item, f"🧊 <b>{sym}</b> كسرت مستوى الوقف قبل الدخول، الموجة غير صالحة. تهدئة {self.s.STOP_COOLDOWN_HOURS:.0f} ساعة.")
                 return
             if price >= item["local_min"] * (1 + self.s.BOUNCE_CONFIRM_PCT):
                 if price > item["entry"] * 1.05:
@@ -176,6 +176,8 @@ class Monitor:
         for name, broker in self.brokers.items():
             if not await broker.enabled():
                 continue
+            if item.get("paper_only") and name != "paper":
+                continue                      # low-liquidity experiment: never real money
             try:
                 opened.append(await broker.buy(item, price, liq, self.params))
             except RiskBlocked as e:
@@ -187,7 +189,7 @@ class Monitor:
             item.update(status="waiting", local_min=None)
             await self.state.set_watch_item(item["mint"], item)
             why = blocked.get("live") if await self._quiet("paper") and "live" in blocked else blocked.get("paper", "")
-            await self.notify(f"⛔ إشارة شراء <b>{sym}</b> أُلغيت: {escape(why or '')}")
+            await self._notify_item(item, f"⛔ إشارة شراء <b>{sym}</b> أُلغيت: {escape(why or '')}")
             return
         low = item.get("local_min")
         if low:
@@ -211,7 +213,7 @@ class Monitor:
                 f"الهدف 1 (بيع النصف): {fmt_price(pos['tp1'])} · بعده وقف متحرك {pos.get('trail_pct', 0.08):.0%} "
                 f"يُشدَّد إلى النصف فوق {fmt_price(pos['tp2'])}\n"
                 f"الوقف: {fmt_price(pos['stop'])} · وقف زمني بعد {item.get('time_stop_hours', 24):.0f} ساعة")
-        if "live" in blocked and await self.brokers["live"].enabled():
+        if "live" in blocked and not item.get("paper_only") and await self.brokers["live"].enabled():
             await self.notify(f"ℹ️ الصفقة الحقيقية على <b>{sym}</b> لم تُفتح: {escape(blocked['live'])}")
 
     # ------------------------------------------------------------ exits
@@ -327,7 +329,7 @@ class Monitor:
                 await self.state.set_watch_item(mint, item)
         if await self._quiet(broker.book):
             logger.info(f"[paper] {msg}")
-            if "🚫" in msg:   # strike bans also block live entries, so always tell the user
+            if "🚫" in msg and not pos.get("paper_only"):   # strike bans also block live entries
                 await self.notify(f"🚫 <b>{sym}</b>: " + msg.split("🚫", 1)[1].strip())
         else:
             await self.notify(msg)
@@ -342,6 +344,13 @@ class Monitor:
             return bool(live) and await live.enabled()
         except Exception:
             return False
+
+    async def _notify_item(self, item: dict, text: str):
+        """Watchlist messages: coins of the paper-only experiment stay silent like paper trades."""
+        if item.get("paper_only"):
+            await self._say("paper", "🧪 " + text)
+        else:
+            await self.notify(text)
 
     async def _say(self, book: str, text: str):
         if await self._quiet(book):
