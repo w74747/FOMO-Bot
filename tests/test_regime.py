@@ -25,3 +25,22 @@ def test_analyze_runs_end_to_end():
     assert r["trades"] > 0 and r["with_regime"] > 0 and r["real"]
     txt = format_report(r)
     assert "بدون فلتر" in txt and "صفقاتنا الفعلية" in txt
+
+
+def test_bounce_entry_model():
+    from src.analysis.backtest import _bounce_entry, backtest
+    from src.analysis.regime import entry_models
+    lv = {"entry": 1.0, "stop": 0.85}
+    B = lambda o, h, l, c: Candle(0, o, h, l, c, 1)  # noqa: E731
+    assert _bounce_entry(B(1.1, 1.1, 0.95, 0.96), lv, 0.02, 0, None) == (None, 0.95)     # armed, no bounce
+    f, _ = _bounce_entry(B(1.1, 1.1, 0.95, 0.98), lv, 0.02, 0, None)
+    assert abs(f - 0.969) < 1e-9                                                          # low, then bounce
+    assert _bounce_entry(B(0.96, 0.96, 0.80, 0.81), lv, 0.02, 0, 0.95)[0] == "cancel"     # stop first
+    f, low = _bounce_entry(B(0.96, 0.98, 0.90, 0.91), lv, 0.02, 0, 0.95)                  # ambiguous bar
+    assert abs(f - 0.969) < 1e-9 and low == 0.90
+    cs = wave_candles(hours=700, period=30)
+    p = StrategyParams.from_settings(settings)
+    assert backtest(cs, p.zigzag_pct, p, 300_000, 20, bounce_pct=0.02, entry_slip=0.01).trades > 0
+    ds = [(f"pool{i}", [tuple(c) for c in wave_candles(hours=700, period=30 + i)], 300_000) for i in range(4)]
+    rows = entry_models(ds, asdict(p), 20, 0.02)
+    assert len(rows) == 6 and rows[0]["all"]["n"] > 0

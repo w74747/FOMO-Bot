@@ -427,7 +427,7 @@ class TelegramController:
         self._spawn(self.regime_job(send=True))
 
     async def regime_job(self, send: bool = True) -> str | None:
-        from src.analysis.regime import analyze, format_report
+        from src.analysis.regime import analyze, entry_models, format_entry_models, format_report
         try:
             pools = await self.db.tracked_pools(min_candles=300)
             datasets = []
@@ -444,7 +444,10 @@ class TelegramController:
             with ProcessPoolExecutor(max_workers=1) as ex:
                 result = await loop.run_in_executor(ex, analyze, datasets, asdict(params),
                                                     self.s.MAX_POSITION_USD, fee_usd, real)
-            text = format_report(result)
+            with ProcessPoolExecutor(max_workers=1) as ex:
+                models = await loop.run_in_executor(ex, entry_models, datasets, asdict(params),
+                                                    self.s.MAX_POSITION_USD, fee_usd)
+            text = format_report(result) + "\n\n" + format_entry_models(models, real)
             logger.info("REGIME REPORT\n" + text)
             for r in result["real"]:
                 logger.info(f"REGIME TRADE {r}")

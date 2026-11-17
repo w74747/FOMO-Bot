@@ -163,3 +163,41 @@ def format_report(r: dict) -> str:
         L += ["", "<b>صفقاتنا الفعلية (ورقي + حقيقي):</b>"]
         L += [_row(f"• {_fmt_range(lo, hi)}", st) for (lo, hi), st in r["real_by_m24"]]
     return "\n".join(L)
+
+
+ENTRY_MODELS = [
+    ("الاختبار الحالي (شراء عند نقطة الدخول)", None, 0.0),
+    ("ارتداد 2% بلا تأخير", 0.02, 0.0),
+    ("ارتداد 2% + تأخير 0.7% (المقاس في GTA)", 0.02, 0.007),
+    ("ارتداد 2% + تأخير 2%", 0.02, 0.02),
+    ("ارتداد 1% + تأخير 0.7%", 0.01, 0.007),
+    ("ارتداد 3% + تأخير 0.7%", 0.03, 0.007),
+]
+
+
+def entry_models(datasets: list[tuple], params: dict, position_usd: float, fee_usd: float) -> list[dict]:
+    """Same coins, same params; only the entry model changes. Shows how much of the back-test's
+    edge survives the real 'wait for the bounce' entry."""
+    known = {f.name for f in fields(StrategyParams)}
+    p = StrategyParams(**{k: v for k, v in params.items() if k in known})
+    series = [(pool, clean_candles([Candle(*c) for c in cs]), liq) for pool, cs, liq in datasets]
+    out = []
+    for name, bounce, slip in ENTRY_MODELS:
+        per = {"A": [], "B": []}
+        for pool, cs, liq in series:
+            r = backtest(cs, p.zigzag_pct, p, liq, position_usd, tx_fee_usd=fee_usd,
+                         bounce_pct=bounce, entry_slip=slip)
+            per[split_of(pool)] += [x * 100 for x in r.returns]
+        out.append({"name": name, "all": _stats(per["A"] + per["B"]),
+                    "a": _stats(per["A"]), "b": _stats(per["B"])})
+    return out
+
+
+def format_entry_models(rows: list[dict], real: list[dict] | None = None) -> str:
+    L = ["🎯 <b>واقعية الاختبار: نموذج الدخول</b>"]
+    for r in rows:
+        L += [f"<b>{r['name']}</b>", _row("• الكل", r["all"]),
+              _row("• A", r["a"]) + " | " + _row("B", r["b"]).replace("B: ", "B ")]
+    if real:
+        L += ["", _row("📍 صفقاتنا الفعلية", _stats([t["ret"] for t in real]))]
+    return "\n".join(L)

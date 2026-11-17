@@ -28,6 +28,33 @@ class BacktestResult:
         return d
 
 
+def _bounce_entry(bar, lv, bounce, slip, armed_low):
+    """Live entry on hourly bars. Returns (fill, low_after_fill) when bought, ("cancel", None)
+    when the stop broke first, or (None, lowest_price_so_far) while still waiting.
+    The order of high and low inside a bar is unknown, so ambiguous bars go against us."""
+    if armed_low is None:
+        if bar.l > lv["entry"]:
+            return None, None
+        if bar.l <= lv["stop"]:
+            return "cancel", None
+        low = bar.l
+        if bar.c >= low * (1 + bounce):                  # low first, then the bounce
+            return low * (1 + bounce) * (1 + slip), None
+        return None, low
+    trigger = armed_low * (1 + bounce)
+    if bar.l < armed_low:
+        if bar.h >= trigger:                             # bounce off the old low, then a new low
+            return trigger * (1 + slip), bar.l
+        if bar.l <= lv["stop"]:
+            return "cancel", None
+        if bar.c >= bar.l * (1 + bounce):
+            return bar.l * (1 + bounce) * (1 + slip), None
+        return None, bar.l
+    if bar.h >= trigger:
+        return max(trigger, bar.o) * (1 + slip), None    # a gap above the trigger fills at the open
+    return None, armed_low
+
+
 def backtest(
     candles: list[Candle],
     zz_pct: float,
@@ -39,8 +66,15 @@ def backtest(
     stats_cache: dict | None = None,
     tx_fee_usd: float = 0.0,
     trade_log: list | None = None,
+    bounce_pct: float | None = None,
+    entry_slip: float = 0.0,
 ) -> BacktestResult:
-    """`stats_cache` (optional) memoises wave stats per refit bar; it is only valid for one
+    """`bounce_pct` (optional) models the live entry: after the price touches the entry level the
+    bot waits for a bounce of `bounce_pct` off the lowest price since, then buys `entry_slip`
+    higher (polling delay). Hourly bars hide the order of high and low, so ambiguous bars are
+    resolved against us. None = the original "buy at the entry level" model.
+
+    `stats_cache` (optional) memoises wave stats per refit bar; it is only valid for one
     candle series and one zigzag pct, and lets the optimiser reuse work across parameter sets."""
     empty = BacktestResult(0, 0, 0.0, 0.0, 0.0, 0.0, 0.0)
     if len(candles) < warmup + 48:
@@ -54,6 +88,7 @@ def backtest(
     blocked_until_new_high = False
     ref_high = None
     tradeable = False
+    armed_low = None   # bounce model: lowest price since the entry zone was touched
 
     for i in range(warmup, len(candles)):
         bar = candles[i]
@@ -83,25 +118,45 @@ def backtest(
             if blocked_until_new_high or not tradeable:
                 continue
             lv = levels(ref_high, stats.median_drop, stats.median_rise, params)
-            if bar.l <= lv["entry"]:
-                fill = min(lv["entry"], bar.o)
-                if fill <= lv["stop"]:
-                    blocked_until_new_high = True
+            fill = None
+            same_bar_low = None          # a low that happened AFTER the fill inside this bar
+            if bounce_pct is None:
+                if bar.l <= lv["entry"]:
+                    fill = min(lv["entry"], bar.o)
+                    if fill <= lv["stop"]:
+                        blocked_until_new_high = True
+                        continue
+            else:
+                fill, same_bar_low = _bounce_entry(bar, lv, bounce_pct, entry_slip, armed_low)
+                if fill == "cancel":                     # stop broken before any bounce
+                    armed_low, blocked_until_new_high = None, True
                     continue
-                scale = fill / lv["entry"]
-                pos = {
-                    "entry": fill,
-                    "stop": lv["stop"] * scale,
-                    "tp1": lv["tp1"] * scale,
-                    "tp2": lv["tp2"] * scale,
-                    "half": False,
-                    "realized": -fee,          # buy transaction
-                    "peak": fill,
-                    "trail": trail_pct(stats.median_drop, params),
-                    "opened": i,
-                    "time_stop": int(time_stop_hours(stats.avg_cycle_hours, params.max_cycle_hours,
-                                                     params.time_stop_factor)),
-                }
+                if fill is None:
+                    armed_low = same_bar_low             # still armed; lowest price so far
+                    continue
+                armed_low = None
+            if fill is None:
+                continue
+            scale = fill / lv["entry"]
+            pos = {
+                "entry": fill,
+                "stop": lv["stop"] * scale,
+                "tp1": lv["tp1"] * scale,
+                "tp2": lv["tp2"] * scale,
+                "half": False,
+                "realized": -fee,          # buy transaction
+                "peak": fill,
+                "trail": trail_pct(stats.median_drop, params),
+                "opened": i,
+                "time_stop": int(time_stop_hours(stats.avg_cycle_hours, params.max_cycle_hours,
+                                                 params.time_stop_factor)),
+            }
+            if same_bar_low is not None and same_bar_low <= pos["stop"]:
+                # bought on the bounce, then the same hour fell through the stop
+                returns.append(-fee + (pos["stop"] - fill) / fill - 2 * cost_side - fee)
+                if trade_log is not None:
+                    trade_log.append((bar.ts, returns[-1]))
+                pos, ref_high, blocked_until_new_high = None, bar.h, False
             continue
 
         # manage open position (stop is checked BEFORE using this bar's high: conservative)
