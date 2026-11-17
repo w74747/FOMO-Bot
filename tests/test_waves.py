@@ -113,3 +113,9 @@ def test_max_cycle_param_lets_optimizer_test_slow_coins():
     slow = backtest(wave_candles(hours=900, period=100), 0.10, p, 300_000, 20)
     fast_only = backtest(wave_candles(hours=900, period=100), 0.10, StrategyParams(), 300_000, 20)
     assert fast_only.trades == 0 and slow.trades > 0
+
+
+def test_time_stop_factor():
+    from src.trading.strategy import time_stop_hours
+    assert time_stop_hours(5) == 7.5 and time_stop_hours(5, factor=4) == 20
+    assert time_stop_hours(20, factor=4) == 48          # still capped

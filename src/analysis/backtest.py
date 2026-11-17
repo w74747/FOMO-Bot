@@ -98,7 +98,8 @@ def backtest(
                     "peak": fill,
                     "trail": trail_pct(stats.median_drop, params),
                     "opened": i,
-                    "time_stop": int(time_stop_hours(stats.avg_cycle_hours, params.max_cycle_hours)),
+                    "time_stop": int(time_stop_hours(stats.avg_cycle_hours, params.max_cycle_hours,
+                                                     params.time_stop_factor)),
                 }
             continue
 

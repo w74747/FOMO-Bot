@@ -7,13 +7,13 @@ TX_PER_ROUND_TRIP = 3   # buy, sell half at target 1, sell the rest
 MAX_TIME_STOP_HOURS = 48.0
 
 
-def time_stop_hours(avg_cycle_hours: float, max_cycle_hours: float = 72.0) -> float:
-    """1.5 x the coin's typical cycle, at least 6h, capped at 48h (or 2/3 of the allowed
+def time_stop_hours(avg_cycle_hours: float, max_cycle_hours: float = 72.0, factor: float = 1.5) -> float:
+    """`factor` x the coin's typical cycle, at least 6h, capped at 48h (or 2/3 of the allowed
     cycle length when slower coins are allowed)."""
     if not avg_cycle_hours:
         return 24.0
     cap = max(MAX_TIME_STOP_HOURS, max_cycle_hours * 2 / 3)
-    return min(cap, max(6.0, 1.5 * avg_cycle_hours))
+    return min(cap, max(6.0, factor * avg_cycle_hours))
 
 
 @dataclass
@@ -25,7 +25,8 @@ class StrategyParams:
     min_reward_risk: float = 1.3
     min_stop_pct: float = 0.07
     stop_drop_factor: float = 0.45
-    max_cycle_hours: float = 72.0   # slower coins are rejected (optimiser also tests 120)
+    max_cycle_hours: float = 72.0   # slower coins are rejected
+    time_stop_factor: float = 1.5   # time stop = this x the coin's typical cycle (before target 1)
     trail_factor: float = 0.40     # trailing distance = 40% of the coin's median drop
     min_trail_pct: float = 0.05
 
@@ -135,7 +136,7 @@ def build_plan(
         stop_pct=lv["stop_pct"],
         median_drop=median_drop,
         median_rise=median_rise,
-        time_stop_hours=time_stop_hours(avg_cycle_hours, p.max_cycle_hours),
+        time_stop_hours=time_stop_hours(avg_cycle_hours, p.max_cycle_hours, p.time_stop_factor),
         cost_pct=cost,
         reward_risk=round(rr, 2),
     )
