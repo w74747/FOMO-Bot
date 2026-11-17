@@ -35,6 +35,7 @@ COMMANDS = [
     ("collect", "جمع بيانات تاريخية لعملات إضافية"),
     ("optimize", "اختبار مئات الإعدادات على البيانات المخزنة"),
     ("apply", "تطبيق إعداد من نتائج /optimize: /apply 1"),
+    ("regime", "هل حالة السوق العامة تؤثر على نجاح الصفقات؟"),
     ("params", "الإعدادات الحالية للاستراتيجية"),
     ("resetparams", "العودة للإعدادات الافتراضية"),
     ("wallet", "المحفظة الحقيقية والرصيد"),
@@ -101,6 +102,7 @@ class TelegramController:
             "scan": self.cmd_scan, "token": self.cmd_token, "pause": self.cmd_pause,
             "resume": self.cmd_resume, "closeall": self.cmd_closeall, "report": self.cmd_report,
             "collect": self.cmd_collect, "optimize": self.cmd_optimize, "apply": self.cmd_apply,
+            "regime": self.cmd_regime,
             "params": self.cmd_params, "resetparams": self.cmd_resetparams,
             "watch": self.cmd_watch, "unwatch": self.cmd_unwatch, "mylist": self.cmd_mylist,
             "ban": self.cmd_ban, "unban": self.cmd_unban,
@@ -413,6 +415,49 @@ class TelegramController:
             return
         await self._reply(update, "🧪 بدأ اختبار الإعدادات على كل البيانات المخزنة… ستصلك النتيجة هنا.")
         self._spawn(self._optimize_job())
+
+    async def cmd_regime(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.db.ready:
+            await self._reply(update, "قاعدة البيانات غير متصلة.")
+            return
+        if not self._guard("regime"):
+            await self._reply(update, "⏳ التحليل يعمل بالفعل.")
+            return
+        await self._reply(update, "🌡 بدأ تحليل أثر حالة السوق… ستصلك النتيجة هنا (دقيقة أو اثنتان).")
+        self._spawn(self.regime_job(send=True))
+
+    async def regime_job(self, send: bool = True) -> str | None:
+        from src.analysis.regime import analyze, format_report
+        try:
+            pools = await self.db.tracked_pools(min_candles=300)
+            datasets = []
+            for p in pools:
+                candles = await self.db.load_candles(p["pool"])
+                datasets.append((p["pool"], [tuple(c) for c in candles], float(p["liquidity_usd"] or 100_000)))
+            real = [{"opened_at": r["opened_at"].timestamp() if r.get("opened_at") else 0,
+                     "ret": r.get("return_pct") or 0.0, "mode": r.get("mode") or "paper",
+                     "symbol": r.get("symbol")}
+                    for r in strategy_closes(await self.db.closed_positions())]
+            params = await load_params(self.state, self.s)
+            fee_usd = await self.state.tx_fee_usd(self.s)
+            loop = asyncio.get_running_loop()
+            with ProcessPoolExecutor(max_workers=1) as ex:
+                result = await loop.run_in_executor(ex, analyze, datasets, asdict(params),
+                                                    self.s.MAX_POSITION_USD, fee_usd, real)
+            text = format_report(result)
+            logger.info("REGIME REPORT\n" + text)
+            for r in result["real"]:
+                logger.info(f"REGIME TRADE {r}")
+            if send:
+                await self.send(text)
+            return text
+        except Exception as e:
+            logger.exception("regime analysis failed")
+            if send:
+                await self.send(f"❌ فشل التحليل: {escape(str(e))}")
+            return None
+        finally:
+            self._busy.discard("regime")
 
     async def _optimize_job(self):
         try:

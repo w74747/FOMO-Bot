@@ -117,7 +117,13 @@ async def main():
         except NotImplementedError:
             pass
 
+    async def regime_once():
+        await asyncio.sleep(90)
+        if db.ready and tg._guard("regime"):
+            await tg.regime_job(send=False)   # result goes to the logs
+
     tasks = [
+        asyncio.create_task(regime_once(), name="regime-once"),
         asyncio.create_task(scanner_loop(scanner, state), name="scanner"),
         asyncio.create_task(monitor.run(), name="monitor"),
         asyncio.create_task(daily_report_loop(db, state, tg.send), name="daily-report"),

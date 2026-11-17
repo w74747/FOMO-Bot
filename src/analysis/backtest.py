@@ -38,6 +38,7 @@ def backtest(
     refit_every: int = 24,
     stats_cache: dict | None = None,
     tx_fee_usd: float = 0.0,
+    trade_log: list | None = None,
 ) -> BacktestResult:
     """`stats_cache` (optional) memoises wave stats per refit bar; it is only valid for one
     candle series and one zigzag pct, and lets the optimiser reuse work across parameter sets."""
@@ -125,6 +126,8 @@ def backtest(
             pos["stop"] = trailing_stop(pos["stop"], e, pos["peak"], pos["tp2"], pos["trail"])
         if closed:
             returns.append(pos["realized"])
+            if trade_log is not None:
+                trade_log.append((candles[pos["opened"]].ts, pos["realized"]))
             pos = None
             ref_high = bar.h
             blocked_until_new_high = False
