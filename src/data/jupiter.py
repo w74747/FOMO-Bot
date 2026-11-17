@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from loguru import logger
 
-from src.data.http import Http, HttpError, RateLimiter
+from src.data.http import Http, HttpError, PriorityLimiter
 
 TOKEN_CATEGORIES = ("toptraded", "toporganicscore", "toptrending")
 
@@ -53,17 +53,19 @@ def parse_token(t: dict) -> dict | None:
 
 
 class JupiterClient:
-    def __init__(self, http: Http, api_key: str | None):
+    def __init__(self, http: Http, api_key: str | None, per_minute: int = 55, reserve: int = 15):
+        """One budget for the whole account (prices, tokens and swap orders share Jupiter's
+        main bucket). Free plan = 60 requests per 60-second sliding window."""
         self.http = http
         if api_key:
             self.base = "https://api.jup.ag"
             self.headers = {"x-api-key": api_key}
-            self.limiter = RateLimiter(240)   # free key starts around 5 req/s
+            self.limiter = PriorityLimiter(per_minute, reserve)
         else:
             logger.warning("JUPITER_API_KEY missing: using the low-limit lite endpoint.")
             self.base = "https://lite-api.jup.ag"
             self.headers = {}
-            self.limiter = RateLimiter(30)
+            self.limiter = PriorityLimiter(28, 12)
 
     # ------------------------------------------------------------ prices
     async def prices(self, mints: list[str]) -> dict[str, dict]:
@@ -76,7 +78,7 @@ class JupiterClient:
             try:
                 data = await self.http.get_json(
                     f"{self.base}/price/v3", params={"ids": ",".join(chunk)},
-                    headers=self.headers, limiter=self.limiter, retries=1,
+                    headers=self.headers, limiter=self.limiter, retries=2, high=True, max_delay=3.0,
                 )
             except HttpError as e:
                 logger.warning(f"Jupiter price error: {e}")

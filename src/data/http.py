@@ -2,6 +2,7 @@
 import asyncio
 import re
 import time
+from collections import deque
 
 import aiohttp
 from loguru import logger
@@ -29,7 +30,7 @@ class RateLimiter:
         self._next = 0.0
         self._lock = asyncio.Lock()
 
-    async def acquire(self):
+    async def acquire(self, high: bool = False):
         async with self._lock:
             now = time.monotonic()
             wait = self._next - now
@@ -40,6 +41,55 @@ class RateLimiter:
     def penalize(self, seconds: float):
         """Push the next slot back (used after a 429)."""
         self._next = max(self._next, time.monotonic() + seconds)
+
+
+class PriorityLimiter:
+    """Sliding 60-second budget shared by everything that uses one API account.
+
+    High-priority calls (prices for open positions, swap orders) may use the whole budget;
+    low-priority calls (discovery scans) only what is left above `reserve`, so a scan can
+    never starve the price monitor. A 429 blocks low priority for the full back-off but
+    high priority for only a couple of seconds."""
+
+    def __init__(self, per_minute: int, reserve: int, window: float = 60.0):
+        self.cap = max(1, per_minute)
+        self.reserve = min(max(0, reserve), self.cap - 1)
+        self.window = window
+        self._hits: deque[float] = deque()
+        self._block = {True: 0.0, False: 0.0}
+        self._lock = asyncio.Lock()
+
+    def _room(self, high: bool, now: float) -> float:
+        """Seconds to wait before a call of this priority may go (0 = now)."""
+        while self._hits and now - self._hits[0] >= self.window:
+            self._hits.popleft()
+        if now < self._block[high]:
+            return self._block[high] - now
+        limit = self.cap if high else self.cap - self.reserve
+        if len(self._hits) < limit:
+            return 0.0
+        # wait until enough old calls leave the window
+        idx = len(self._hits) - limit
+        return max(0.05, self._hits[idx] + self.window - now)
+
+    async def acquire(self, high: bool = False):
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                wait = self._room(high, now)
+                if wait <= 0:
+                    self._hits.append(now)
+                    return
+            await asyncio.sleep(min(wait, 1.0) if high else wait)
+
+    def penalize(self, seconds: float):
+        now = time.monotonic()
+        self._block[False] = max(self._block[False], now + seconds)
+        self._block[True] = max(self._block[True], now + min(seconds, 2.0))
+
+    def used(self) -> int:
+        now = time.monotonic()
+        return sum(1 for t in self._hits if now - t < self.window)
 
 
 class Http:
@@ -64,13 +114,15 @@ class Http:
         params: dict | None = None,
         headers: dict | None = None,
         json_body=None,
-        limiter: RateLimiter | None = None,
+        limiter: RateLimiter | PriorityLimiter | None = None,
         retries: int = 3,
+        high: bool = False,
+        max_delay: float | None = None,
     ):
         backoff = 2.0
         for attempt in range(retries + 1):
             if limiter:
-                await limiter.acquire()
+                await limiter.acquire(high=high)
             try:
                 s = await self.session()
                 async with s.request(method, url, params=params, headers=headers, json=json_body) as resp:
@@ -81,6 +133,8 @@ class Http:
                         retry_after = resp.headers.get("Retry-After")
                         hinted = float(retry_after) if retry_after and retry_after.isdigit() else 0.0
                         delay = min(max(hinted, backoff * 15), 180.0)  # never retry instantly
+                        if max_delay is not None:
+                            delay = min(delay, max_delay)  # time-critical calls retry fast
                         if limiter and resp.status == 429:
                             limiter.penalize(delay)
                         logger.warning(f"{resp.status} from {redact(url)}, retry in {delay:.0f}s")

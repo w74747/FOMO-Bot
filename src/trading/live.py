@@ -34,6 +34,7 @@ class LiveBroker:
         self.wallet = wallet
         self.headers = {"x-api-key": jupiter_key}
         self.sol_usd = settings.SOL_USD_FALLBACK
+        self.limiter = None   # Jupiter's shared budget (set in main); /order counts against it
 
     async def enabled(self) -> bool:
         return await self.state.live_enabled()
@@ -46,7 +47,7 @@ class LiveBroker:
         order = await self.http.get_json(f"{JUP_SWAP}/order", params={
             "inputMint": input_mint, "outputMint": output_mint, "amount": str(amount),
             "taker": self.wallet.address, "slippageBps": str(slippage_bps),
-        }, headers=self.headers, retries=1)
+        }, headers=self.headers, retries=2, limiter=self.limiter, high=True, max_delay=2.0)
         if not order.get("transaction"):
             raise SwapFailed(f"order rejected: {order.get('errorCode')} {order.get('errorMessage') or order.get('error')}")
         impact = order.get("priceImpact")   # percent (negative = cost); ambiguous fields are ignored

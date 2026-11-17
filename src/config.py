@@ -91,7 +91,9 @@ class Settings(BaseSettings):
 
     # --- Monitor ---
     PRICE_POLL_SEC: int = 15          # full watchlist refresh
-    FAST_POLL_SEC: float = 3.0        # open positions + coins in the buy zone
+    FAST_POLL_SEC: float = 2.0        # open positions + coins in the buy zone
+    JUPITER_RPM: int = 55             # account budget per 60s (free plan = 60); 600 on Developer
+    JUPITER_SCAN_RESERVE: int = 15    # slots per minute scans may never use (monitor at 2s needs ~30)
     BOUNCE_CONFIRM_PCT: float = 0.02  # buy only after a 2% bounce off the local low
     LIQUIDITY_DROP_EXIT_PCT: float = 0.40
     LIQUIDITY_CONFIRM_READS: int = 3       # a drop must persist this many readings…

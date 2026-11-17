@@ -84,7 +84,7 @@ async def main():
 
     tg = TelegramController(settings.TELEGRAM_BOT_TOKEN, settings.ALLOWED_ADMIN_CHAT_ID, settings)
     gecko = GeckoClient(http, settings.GECKO_CALLS_PER_MIN, settings.COINGECKO_DEMO_API_KEY)
-    jupiter = JupiterClient(http, settings.JUPITER_API_KEY)
+    jupiter = JupiterClient(http, settings.JUPITER_API_KEY, settings.JUPITER_RPM, settings.JUPITER_SCAN_RESERVE)
     safety = SafetyChecker(http, settings.SOLANA_RPC_URL, settings.BIRDEYE_API_KEY)
     broker = PaperBroker(state, db, settings)
     live = None
@@ -92,6 +92,7 @@ async def main():
         try:
             wallet = SolanaWallet(http, settings.SOLANA_RPC_URL, settings.WALLET_PRIVATE_KEY)
             live = LiveBroker(state, db, settings, http, wallet, settings.JUPITER_API_KEY)
+            live.limiter = jupiter.limiter
             logger.info(f"Live broker ready for wallet {wallet.address} (enabled={await state.live_enabled()})")
         except Exception as e:
             logger.error(f"Live broker disabled: could not load wallet ({type(e).__name__})")

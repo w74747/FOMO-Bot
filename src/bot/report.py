@@ -82,6 +82,15 @@ def _comparison(day_rows: list[dict], every: list[dict], hours: float) -> list[s
                    "⚠️ الحقيقي أضعف من الورقي: انزلاق ورسوم أعلى من المتوقع" if gap < 0 else
                    "ℹ️ الحقيقي أفضل من الورقي (غالباً توقيت التنفيذ)")
         out.append(f"⚖️ الفرق في متوسط الصفقة: {gap:+.1f} نقطة — {verdict}")
+    ent = [r["entry_gap_pct"] for r in live_all if r.get("entry_gap_pct") is not None]
+    ext = [r["exit_gap_pct"] for r in live_all if r.get("exit_gap_pct") is not None]
+    if ent or ext:
+        parts = []
+        if ent:
+            parts.append(f"الشراء أعلى من القاع بـ {statistics.mean(ent):.1f}% (المثالي 2%)")
+        if ext:
+            parts.append(f"البيع تحت الوقف بـ {abs(statistics.mean(ext)):.1f}%")
+        out.append("⏱ سرعة التنفيذ (الحقيقي): " + " · ".join(parts))
     return out
 
 

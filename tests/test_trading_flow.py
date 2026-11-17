@@ -267,3 +267,14 @@ async def test_losing_time_stop_rests_the_coin(env):
     assert db.closed[-1][1] == "وقف زمني"
     assert MINT not in await state.get_watchlist()  # no instant re-buy
     assert await state.r.ttl(f"fb:cooldown:{MINT}") > 0
+
+
+async def test_entry_and_exit_gaps_are_recorded(env):
+    state, db, jup, mon, msgs = env
+    await step(mon, jup, 0.78)                     # armed, low = 0.78
+    await step(mon, jup, 0.80)                     # bought 2.56% above the low
+    pos = await state.get_position(MINT)
+    assert abs(pos["entry_gap_pct"] - (0.80 / 0.78 - 1) * 100) < 1e-9
+    await step(mon, jup, pos["stop"] * 0.97)       # reading 3% under the stop
+    closed, reason = db.closed[-1]
+    assert reason == "وقف خسارة" and abs(closed["exit_gap_pct"] + 3.0) < 1e-6

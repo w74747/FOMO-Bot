@@ -189,6 +189,15 @@ class Monitor:
             why = blocked.get("live") if await self._quiet("paper") and "live" in blocked else blocked.get("paper", "")
             await self.notify(f"⛔ إشارة شراء <b>{sym}</b> أُلغيت: {escape(why or '')}")
             return
+        low = item.get("local_min")
+        if low:
+            # how far above the bounce low we actually bought (ideal = BOUNCE_CONFIRM_PCT);
+            # measures what polling speed costs at entry
+            gap = (price / low - 1) * 100
+            for pos in opened:
+                pos["entry_gap_pct"] = gap
+                await self.state.save_position(item["mint"], pos, pos.get("mode") or "paper")
+            logger.info(f"entry {item.get('symbol')}: {gap:.2f}% above the bounce low")
         item.update(status="holding", local_min=None)
         await self.state.set_watch_item(item["mint"], item)
         for pos in opened:
@@ -240,6 +249,9 @@ class Monitor:
                 dirty = True
 
         if price <= pos["stop"]:
+            # how far below the stop the reading that triggered the exit was (polling delay)
+            pos["exit_gap_pct"] = (price / pos["stop"] - 1) * 100
+            await self.state.save_position(mint, pos, book)
             if not pos["tp1_hit"]:
                 reason, cooldown = "وقف خسارة", True
             elif pos["stop"] > pos["entry_price"] * 1.001:
