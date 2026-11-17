@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     DAILY_LOSS_LIMIT_USD: float = 50.0
     MAX_SLIPPAGE_BPS: int = 300
     PAPER_START_BALANCE_USD: float = 1000.0
+    PAPER_NOTIFY: bool = False              # paper trade messages while live is on (False = silent)
     STOP_COOLDOWN_HOURS: float = 12.0
     LIQUIDITY_BAN_HOURS: float = 72.0
     STRIKE_LIMIT: int = 2               # stop-losses on one coin within 7 days…

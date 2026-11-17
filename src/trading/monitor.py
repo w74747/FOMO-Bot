@@ -186,11 +186,15 @@ class Monitor:
         if not opened:
             item.update(status="waiting", local_min=None)
             await self.state.set_watch_item(item["mint"], item)
-            await self.notify(f"⛔ إشارة شراء <b>{sym}</b> أُلغيت: {escape(blocked.get('paper', ''))}")
+            why = blocked.get("live") if await self._quiet("paper") and "live" in blocked else blocked.get("paper", "")
+            await self.notify(f"⛔ إشارة شراء <b>{sym}</b> أُلغيت: {escape(why or '')}")
             return
         item.update(status="holding", local_min=None)
         await self.state.set_watch_item(item["mint"], item)
         for pos in opened:
+            if await self._quiet(pos.get("mode") or "paper"):
+                logger.info(f"[paper] buy {sym} {pos['cost_usd']:.2f}$ @ {pos['entry_price']}")
+                continue
             mode = "📝 ورقي" if pos.get("mode") == "paper" else "💰 <b>حقيقي</b>"
             await self.notify(
                 f"🟢 <b>شراء {sym}</b> ({mode})\n"
@@ -218,7 +222,7 @@ class Monitor:
             dirty = True
         base = pos.get("liquidity_at_entry")
         if self._liquidity_collapsed(f"{book}:{mint}", liq, base):
-            await self.notify(f"⚠️ <b>{escape(pos.get('symbol', '?'))}</b>: سحب سيولة مؤكد "
+            await self._say(book, f"⚠️ <b>{escape(pos.get('symbol', '?'))}</b>: سحب سيولة مؤكد "
                               f"({base:,.0f}$ ← {liq:,.0f}$ لمدة {self.s.LIQUIDITY_CONFIRM_SEC:.0f}+ ث). خروج فوري.")
             await self._exit(mint, 1.0, price, "سحب سيولة", liq, item, broker, cooldown=True)
             await self.state.set_cooldown(mint, self.s.LIQUIDITY_BAN_HOURS)
@@ -256,8 +260,8 @@ class Monitor:
                 p["stop"] = trailing_stop(max(p["stop"], p["entry_price"]), p["entry_price"], p["peak"],
                                           p["tp2"], p.get("trail_pct", 0.08))
                 await self.state.save_position(mint, p, book)
-                await self.notify(
-                    f"🔒 <b>{escape(p.get('symbol', '?'))}</b>: الباقي يتبع السعر بوقف متحرك "
+                await self._say(
+                    book, f"🔒 <b>{escape(p.get('symbol', '?'))}</b>: الباقي يتبع السعر بوقف متحرك "
                     f"{p.get('trail_pct', 0.08):.0%} تحت أعلى سعر (لا يقل عن سعر الدخول). الوقف الآن {fmt_price(p['stop'])}")
             return
         if not pos["tp1_hit"] and now >= pos["time_stop_at"]:
@@ -306,8 +310,29 @@ class Monitor:
                 item.update(ref_high=price, entry=lv["entry"], stop=lv["stop"], tp1=lv["tp1"], tp2=lv["tp2"],
                             status="waiting", local_min=None)
                 await self.state.set_watch_item(mint, item)
-        await self.notify(msg)
+        if await self._quiet(broker.book):
+            logger.info(f"[paper] {msg}")
+            if "🚫" in msg:   # strike bans also block live entries, so always tell the user
+                await self.notify(f"🚫 <b>{sym}</b>: " + msg.split("🚫", 1)[1].strip())
+        else:
+            await self.notify(msg)
         return pos, pnl, closed
+
+    async def _quiet(self, book: str) -> bool:
+        """Paper book goes silent while live trading is on (unless PAPER_NOTIFY)."""
+        if book != "paper" or getattr(self.s, "PAPER_NOTIFY", False):
+            return False
+        live = self.brokers.get("live")
+        try:
+            return bool(live) and await live.enabled()
+        except Exception:
+            return False
+
+    async def _say(self, book: str, text: str):
+        if await self._quiet(book):
+            logger.info(f"[{book}] {text}")
+        else:
+            await self.notify(text)
 
     async def _remaining_cooldown_h(self, mint: str) -> float:
         ttl = await self.state.r.ttl(f"fb:cooldown:{mint}")

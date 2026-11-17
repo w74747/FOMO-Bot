@@ -244,6 +244,9 @@ async def test_monitor_runs_paper_and_live_side_by_side(live):
     await step(0.80)
     assert await state.get_position(MINT, "paper") and await state.get_position(MINT, "live")
     assert any("حقيقي" in m for m in msgs)
+    buys = [m for m in msgs if "شراء" in m and "🟢" in m]
+    assert buys and all("حقيقي" in m for m in buys[-1:]) and not any("ورقي" in m for m in msgs[-3:])
+    n_before = len(msgs)
 
     # a failing live sell keeps the position and warns once; paper still exits
     chain.fail_execute = True
@@ -253,6 +256,8 @@ async def test_monitor_runs_paper_and_live_side_by_side(live):
     assert await state.get_position(MINT, "live") is not None
     assert await state.get_position(MINT, "paper") is None
     assert sum("فشل البيع" in m for m in msgs) == 1
+    # paper exit happened silently: no paper sell message while live is on
+    assert not any("بيع" in m and "حقيقي" not in m and "فشل" not in m for m in msgs[n_before:])
     chain.fail_execute = False
     await step(live_pos["stop"] * 0.5)                  # retry succeeds
     assert await state.get_position(MINT, "live") is None and chain.tokens is None

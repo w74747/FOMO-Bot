@@ -143,6 +143,23 @@ async def test_report_excludes_manual_closes():
     assert "عدد الصفقات: 1 " in txt and "مستبعد: 2" in txt and "-1.67$" in txt
 
 
+async def test_report_compares_live_and_paper():
+    from datetime import timedelta
+    import fakeredis.aioredis as fr
+    state = StateManager(client=fr.FakeRedis(decode_responses=True))
+    now = datetime.now(timezone.utc)
+    old = now - timedelta(days=3)
+    rows = [{"pnl_usd": 5.0, "return_pct": 10.0, "closed_at": old, "mode": "paper"},   # before live: excluded
+            {"pnl_usd": 2.0, "return_pct": 10.0, "closed_at": now, "mode": "live"},
+            {"pnl_usd": -1.0, "return_pct": -5.0, "closed_at": now, "mode": "live"},
+            {"pnl_usd": 2.2, "return_pct": 11.0, "closed_at": now, "mode": "paper"},
+            {"pnl_usd": -0.8, "return_pct": -4.0, "closed_at": now, "mode": "paper"}]
+    txt = await build_report(FakeDB(rows), state, settings)
+    assert txt.index("الحقيقي") < txt.index("الورقي في نفس الفترة")
+    assert "+1.00$" in txt and "+1.40$" in txt and "الفرق في متوسط الصفقة: -1.0" in txt
+    assert "مرجع صامت" in txt and "3 صفقة" in txt
+
+
 def test_arabic_reasons_and_address_extraction():
     from src.analysis.scanner import extract_address
     from src.bot.reasons import ar_reason
