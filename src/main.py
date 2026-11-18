@@ -132,9 +132,9 @@ async def main():
 
     async def age_analysis_once():
         await asyncio.sleep(240)            # after the start-up checks, off the scan
-        if db.ready and not await state.get_meta("age_v1") and tg._guard("regime"):
+        if db.ready and not await state.get_meta("age_v2") and tg._guard("regime"):
             if await tg.regime_job(send=True):
-                await state.set_meta("age_v1", "done")
+                await state.set_meta("age_v2", "done")
 
     tasks = [
         asyncio.create_task(age_analysis_once(), name="age-analysis-once"),

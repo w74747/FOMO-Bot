@@ -56,3 +56,15 @@ def test_body_only_runs():
         full = backtest(cs, p.zigzag_pct, p, 300_000, 20, bounce_pct=0.02, entry_slip=0.007)
         body = backtest(cs, p.zigzag_pct, p, 300_000, 20, bounce_pct=0.02, entry_slip=0.007, body_only=True)
         assert full.trades > 0 and body.trades >= 0
+
+
+
+def test_strategy_health_uses_only_the_past():
+    from src.analysis.regime import DAY, strategy_health
+    # bad first 10 days, good after: the filter must switch on only after a lag
+    trades = [{"ts": d * DAY + h * 3600, "ret": (-5.0 if d < 10 else 5.0), "side": "A" if h % 2 else "B",
+               "pool": "p"} for d in range(20) for h in range(0, 24, 4)]
+    h = strategy_health(trades, windows=(4,))[4]
+    full, filt = h["levels"][0][1], h["levels"][2][1]
+    assert filt["avg"] > full["avg"] and h["off"]["avg"] < 0
+    assert h["now"] == 5.0

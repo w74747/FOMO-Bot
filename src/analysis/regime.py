@@ -124,7 +124,9 @@ def analyze(datasets: list[tuple], params: dict, position_usd: float, fee_usd: f
                 st["stops"] = sum(1 for t in rows if t["ret"] <= -10) / st["n"] * 100
                 st["coins"] = coins
             by_age.append((label, st))
+    health = strategy_health(trades)
     return {
+        "health": health,
         "by_age": by_age,
         "coins": len(series), "hours": len(index),
         "trades": len(trades), "with_regime": len(with_rg),
@@ -142,7 +144,7 @@ def analyze(datasets: list[tuple], params: dict, position_usd: float, fee_usd: f
 
 def _fmt_range(lo, hi, unit="%"):
     if lo <= -1e8:
-        return f"< {hi:+.0f}{unit}"
+        return f"&lt; {hi:+.0f}{unit}"
     if hi >= 100 and unit == "%" and lo >= 60:
         return f"≥ {lo:.0f}{unit}"
     if hi >= 1e8:
@@ -154,6 +156,54 @@ def _row(label, st):
     if not st["n"]:
         return f"{label}: —"
     return f"{label}: {st['n']} صفقة · فوز {st['win']:.0f}% · متوسط {st['avg']:+.2f}% · مجموع {st['total']:+.0f}%"
+
+
+DAY = 86400
+
+
+def strategy_health(trades: list[dict], windows=(4, 7), lag_days: float = 2.0,
+                    min_trades: int = 10) -> dict:
+    """Equity-curve filter test: before each trade, how did the strategy do across ALL coins in
+    the previous `w` days? Only trades entered at least `lag_days` earlier are used (they are
+    closed by then: time stop <= 48h), so nothing from the future leaks in."""
+    rows = sorted(trades, key=lambda t: t["ts"])
+    out = {}
+    for w in windows:
+        tagged = []
+        for t in rows:
+            hi, lo = t["ts"] - lag_days * DAY, t["ts"] - (lag_days + w) * DAY
+            past = [x["ret"] for x in rows if lo <= x["ts"] < hi]
+            tagged.append({**t, "trail": statistics.mean(past) if len(past) >= min_trades else None})
+        known = [t for t in tagged if t["trail"] is not None]
+        res = {"known": len(known), "levels": []}
+        for lvl in (-100, -2, 0, 2, 4):
+            res["levels"].append((lvl,
+                                  _stats([t["ret"] for t in known if t["trail"] > lvl]),
+                                  _stats([t["ret"] for t in known if t["trail"] > lvl and t["side"] == "A"]),
+                                  _stats([t["ret"] for t in known if t["trail"] > lvl and t["side"] == "B"])))
+        res["off"] = _stats([t["ret"] for t in known if t["trail"] <= 0])
+        out[w] = res
+    if rows:
+        now = rows[-1]["ts"] + lag_days * DAY
+        for w in windows:
+            past = [x["ret"] for x in rows if now - (lag_days + w) * DAY <= x["ts"] < now - lag_days * DAY]
+            out[w]["now"] = statistics.mean(past) if len(past) >= min_trades else None
+            out[w]["now_n"] = len(past)
+    return out
+
+
+def format_health(r: dict) -> str:
+    L = ["🩺 <b>فلتر صحة الاستراتيجية</b>: نتداول فقط إذا كان متوسط صفقات الاختبار على كل العملات "
+         "في الأيام الماضية أعلى من حد"]
+    for w, res in (r.get("health") or {}).items():
+        L.append(f"<b>نافذة {w} أيام</b> ({res['known']} صفقة لها تاريخ كافٍ)")
+        for lvl, st, a, b in res["levels"]:
+            name = "بدون فلتر" if lvl <= -100 else f"المتوسط السابق &gt; {lvl:+d}%"
+            L.append(_row(f"• {name}", st) + (f" | A {a['avg']:+.2f}% · B {b['avg']:+.2f}%" if a["n"] and b["n"] else ""))
+        L.append(_row("• الصفقات التي كان الفلتر سيمنعها (≤ 0%)", res["off"]))
+        if res.get("now") is not None:
+            L.append(f"• الآن: متوسط آخر {w} أيام (قبل يومين) = {res['now']:+.2f}% من {res['now_n']} صفقة")
+    return "\n".join(L)
 
 
 def format_age(r: dict) -> str:
