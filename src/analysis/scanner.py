@@ -512,13 +512,18 @@ class Scanner:
         h = await self.state.get_health()
         if not h or h.get("value") is None:
             return "🩺 صحة الاستراتيجية: غير متوفرة بعد"
-        ok = h["value"] > self.s.HEALTH_MIN_PCT
+        v = h["value"]
         trend = ""
         if h.get("prev") is not None:
-            trend = " ↗" if h["value"] > h["prev"] else " ↘"
-        return (f"🩺 صحة الاستراتيجية: متوسط الصفقة في الاختبار مؤخراً <b>{h['value']:+.2f}%</b>{trend} "
-                f"({h['n']} صفقة) — " + ("✅ تسمح بالحقيقي" if ok else
-                f"⛔ الحقيقي محجوب حتى تتجاوز {self.s.HEALTH_MIN_PCT:+.0f}% (الورقي مستمر)"))
+            trend = " ↗" if v > h["prev"] else " ↘"
+        if v <= self.s.HEALTH_MIN_PCT:
+            verdict = "⛔ الحقيقي محجوب (الورقي مستمر)"
+        elif v > getattr(self.s, "AUTO_START_HEALTH", 2.0):
+            verdict = "✅ جيدة"
+        else:
+            verdict = "⚠️ ضعيفة: لا بدء تلقائي للحقيقي"
+        return (f"🩺 صحة الاستراتيجية: متوسط الصفقة في الاختبار مؤخراً <b>{v:+.2f}%</b>{trend} "
+                f"({h['n']} صفقة) — {verdict}")
 
     def _report(self, n_pools, n_kept, results, accepted, secs, prefilter_rejected=None) -> str:
         from html import escape

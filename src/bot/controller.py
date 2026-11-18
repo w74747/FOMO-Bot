@@ -60,7 +60,7 @@ COMMANDS = [
     ("params", "الإعدادات الحالية للاستراتيجية"),
     ("resetparams", "العودة للإعدادات الافتراضية"),
     ("wallet", "المحفظة الحقيقية والرصيد"),
-    ("live", "تشغيل/إيقاف التداول الحقيقي: /live on | off"),
+    ("live", "التداول الحقيقي: /live auto | on | off"),
     ("livetest", "اختبار جولة حقيقية صغيرة (2$)"),
     ("stop", "طوارئ: بيع كل المراكز الحقيقية وإيقاف الحقيقي"),
     ("pause", "إيقاف فتح صفقات جديدة"),
@@ -76,14 +76,14 @@ class TelegramController:
         self.s = settings
         self.app = Application.builder().token(token).build()
         # set later by main.py
-        self.state = self.db = self.scanner = self.monitor = self.live = None
+        self.state = self.db = self.scanner = self.monitor = self.live = self.autopilot = None
         self._bg: set[asyncio.Task] = set()
         self._busy: set[str] = set()
         self._register()
 
-    def bind(self, state, db, scanner, monitor, live=None):
+    def bind(self, state, db, scanner, monitor, live=None, autopilot=None):
         self.state, self.db, self.scanner, self.monitor = state, db, scanner, monitor
-        self.live = live
+        self.live, self.autopilot = live, autopilot
 
     # ------------------------------------------------------------ lifecycle
     async def start(self):
@@ -210,12 +210,16 @@ class TelegramController:
             on = await self.state.live_enabled()
             lp = await self.state.get_positions("live")
             lpnl = await self.state.get_daily_pnl("live")
-            lines.append(f"💰 الحقيقي: <b>{'يعمل' if on else 'متوقف'}</b> · مراكز {len(lp)}/{self.s.LIVE_MAX_OPEN_POSITIONS} · "
+            auto = self.autopilot and await self.autopilot.is_auto()
+            mode = ("تلقائي — " if auto else "") + ("يعمل" if on else "متوقف")
+            lines.append(f"💰 الحقيقي: <b>{mode}</b> · مراكز {len(lp)}/{self.s.LIVE_MAX_OPEN_POSITIONS} · "
                          f"اليوم {lpnl:+.2f}$ (الحد −{self.s.LIVE_DAILY_LOSS_USD:.0f}$) · صفقة {self.s.LIVE_POSITION_USD:.0f}$")
             why = await self.state.health_block(self.s)
             h = await self.state.get_health()
             val = f"{h['value']:+.2f}%" if h and h.get("value") is not None else "—"
             lines.append(f"🩺 صحة الاستراتيجية: {val} — " + (f"⛔ {escape(why)}" if why else "✅ تسمح بالحقيقي"))
+            if auto:
+                lines.append("🤖 " + await self.autopilot.evaluate())
         else:
             lines.append("💰 الحقيقي: غير مهيأ (يحتاج WALLET_PRIVATE_KEY وSOLANA_RPC_URL وJUPITER_API_KEY)")
         return "\n".join(lines)
@@ -623,12 +627,25 @@ class TelegramController:
         if not await self._need_live(update):
             return
         arg = (context.args[0].lower() if context.args else "")
+        if arg == "auto":
+            await self.autopilot.enable()
+            status = await self.autopilot.evaluate()
+            await self._reply(update, (
+                "🤖 <b>الوضع التلقائي مفعّل</b>: البوت يقرر متى يبدأ التداول الحقيقي ومتى يوقفه.\n"
+                f"• يبدأ: الصحة > {self.s.AUTO_START_HEALTH:+.0f}% و متوسط آخر {self.s.AUTO_START_PAPER_N} صفقات ورقية > {self.s.AUTO_START_PAPER_AVG:+.0f}%\n"
+                f"• يتوقف: الصحة ≤ {self.s.AUTO_STOP_HEALTH:+.1f}% أو متوسط آخر {self.s.AUTO_STOP_PAPER_N} صفقات ورقية سالب، أو حد الخسارة اليومي\n"
+                f"• طوارئ: خسارة {self.s.AUTO_KILL_USD:.0f}$ من أعلى نقطة ← توقف نهائي حتى تعيده أنت\n"
+                f"• لا إعادة تشغيل قبل {self.s.AUTO_MIN_SWITCH_H:.0f} ساعة من آخر تبديل\n\n"
+                f"الحالة الآن: {status}\nللإلغاء: /live off"))
+            return
+        if self.autopilot:
+            await self.autopilot.disable()          # any manual command takes over
         if arg == "off":
             await self.state.set_live_enabled(False)
             await self._reply(update, "⏹ أُوقف فتح صفقات حقيقية جديدة. المراكز الحقيقية المفتوحة تُدار حتى الخروج (أو /stop لبيعها الآن).")
             return
         if arg not in ("on", "force"):
-            await self._reply(update, "الاستخدام: <code>/live on</code> أو <code>/live off</code>")
+            await self._reply(update, "الاستخدام: <code>/live auto</code> أو <code>/live on</code> أو <code>/live off</code>")
             return
         closed = strategy_closes(await self.db.closed_positions())
         paper = [r for r in closed if (r.get("mode") or "paper") == "paper"]
@@ -669,6 +686,8 @@ class TelegramController:
         if not await self._need_live(update):
             return
         await self.state.set_live_enabled(False)
+        if self.autopilot:
+            await self.autopilot.disable()
         await self._reply(update, "🛑 أُوقف التداول الحقيقي. جارٍ بيع كل المراكز الحقيقية…")
         n = await self.monitor.close_all("إيقاف طوارئ", book="live")
         left = await self.state.get_positions("live")

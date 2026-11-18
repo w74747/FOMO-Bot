@@ -109,11 +109,20 @@ class Settings(BaseSettings):
     # averaged more than HEALTH_MIN_PCT per trade over the last HEALTH_WINDOW_DAYS (lagged so
     # those trades are closed). Paper keeps trading regardless, to keep measuring.
     HEALTH_GATE: bool = True
-    HEALTH_MIN_PCT: float = 2.0
+    HEALTH_MIN_PCT: float = 0.5      # hard floor for any live entry (= autopilot stop level)
     HEALTH_WINDOW_DAYS: float = 4.0
     HEALTH_LAG_DAYS: float = 2.0
     HEALTH_MIN_TRADES: int = 10
-    HEALTH_MAX_AGE_H: float = 12.0   # older reading = unknown = live blocked  # re-check every coin with stored history on each scan
+    HEALTH_MAX_AGE_H: float = 12.0   # older reading = unknown = live blocked
+    # autopilot (/live auto): the bot switches real trading on and off by itself
+    AUTO_START_HEALTH: float = 2.0       # start: health above this ...
+    AUTO_START_PAPER_N: int = 10         # ... and the last N paper closes (normal coins) ...
+    AUTO_START_PAPER_AVG: float = 0.0    # ... average above this (%)
+    AUTO_STOP_HEALTH: float = 0.5        # stop: health at or below this, or
+    AUTO_STOP_PAPER_N: int = 8           # the last N paper closes average below 0%
+    AUTO_KILL_USD: float = 15.0          # live drawdown from its peak since /live auto: hard stop
+    AUTO_MIN_SWITCH_H: float = 12.0      # no restart within this many hours of the last switch
+    AUTO_PAPER_SINCE: str = "2026-11-17T21:50:00+00:00"   # realistic coin selection went live  # re-check every coin with stored history on each scan
     LIQUIDITY_DROP_EXIT_PCT: float = 0.40
     LIQUIDITY_CONFIRM_READS: int = 3       # a drop must persist this many readings…
     LIQUIDITY_CONFIRM_SEC: float = 20.0    # …spanning at least this long (filters data blips)

@@ -98,7 +98,9 @@ async def main():
             logger.error(f"Live broker disabled: could not load wallet ({type(e).__name__})")
     scanner = Scanner(gecko, safety, state, db, settings, notify=tg.send, jupiter=jupiter)
     monitor = Monitor(state, jupiter, broker, settings, notify=tg.send, live_broker=live)
-    tg.bind(state, db, scanner, monitor, live)
+    from src.trading.autopilot import Autopilot
+    autopilot = Autopilot(state, db, settings, notify=tg.send) if live else None
+    tg.bind(state, db, scanner, monitor, live, autopilot)
 
     runner = await start_health_server(monitor)
     await tg.start()
@@ -140,8 +142,18 @@ async def main():
         await asyncio.sleep(45)
         await scanner.update_health()
 
+    async def autopilot_loop():
+        await asyncio.sleep(60)
+        while autopilot:
+            try:
+                await autopilot.evaluate()
+            except Exception as e:
+                logger.exception(f"autopilot failed: {e}")
+            await asyncio.sleep(600)
+
     tasks = [
         asyncio.create_task(health_once(), name="health-once"),
+        asyncio.create_task(autopilot_loop(), name="autopilot"),
         asyncio.create_task(age_analysis_once(), name="age-analysis-once"),
         asyncio.create_task(realistic_opt_once(), name="realistic-opt-once"),
         asyncio.create_task(scanner_loop(scanner, state), name="scanner"),

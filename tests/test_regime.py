@@ -84,7 +84,7 @@ async def test_health_gate_blocks_live_only_when_weak():
     from src.core.state import StateManager
     st = StateManager(client=fr.FakeRedis(decode_responses=True))
     assert "غير متوفر" in await st.health_block(settings)              # unknown -> blocked
-    await st.set_health({"value": 0.55, "n": 47, "prev": 6.0, "ts": time.time()})
+    await st.set_health({"value": 0.3, "n": 47, "prev": 6.0, "ts": time.time()})
     assert "ضعيفة" in await st.health_block(settings)
     await st.set_health({"value": 6.0, "n": 89, "prev": 1.0, "ts": time.time()})
     assert await st.health_block(settings) is None
