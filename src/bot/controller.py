@@ -20,6 +20,26 @@ from src.trading.strategy import PARAM_NAMES, load_params
 
 MAX_LEN = 4000
 
+
+def split_message(text: str, limit: int = MAX_LEN) -> list[str]:
+    """Split on line breaks so an HTML tag (<b>…</b>) is never cut in half."""
+    chunks, cur = [], ""
+    for line in text.split("\n"):
+        while len(line) > limit:                 # a single huge line: hard cut (rare)
+            if cur:
+                chunks.append(cur)
+                cur = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        if cur and len(cur) + 1 + len(line) > limit:
+            chunks.append(cur)
+            cur = line
+        else:
+            cur = f"{cur}\n{line}" if cur else line
+    if cur:
+        chunks.append(cur)
+    return chunks or [""]
+
 COMMANDS = [
     ("status", "حالة البوت والرصيد"),
     ("watchlist", "العملات المرشحة ومستويات الدخول"),
@@ -86,8 +106,7 @@ class TelegramController:
             logger.warning(f"telegram shutdown: {e}")
 
     async def send(self, text: str):
-        for i in range(0, len(text), MAX_LEN):
-            chunk = text[i:i + MAX_LEN]
+        for chunk in split_message(text):
             try:
                 await self.app.bot.send_message(self.admin, chunk, parse_mode=ParseMode.HTML,
                                                 disable_web_page_preview=True)
@@ -138,8 +157,8 @@ class TelegramController:
 
     async def _reply(self, update: Update, text: str, markup=None):
         msg = update.effective_message
-        for i in range(0, len(text), MAX_LEN):
-            await msg.reply_text(text[i:i + MAX_LEN], parse_mode=ParseMode.HTML,
+        for i, chunk in enumerate(split_message(text)):
+            await msg.reply_text(chunk, parse_mode=ParseMode.HTML,
                                  reply_markup=markup if i == 0 else None, disable_web_page_preview=True)
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

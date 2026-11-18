@@ -68,3 +68,11 @@ def test_strategy_health_uses_only_the_past():
     full, filt = h["levels"][0][1], h["levels"][2][1]
     assert filt["avg"] > full["avg"] and h["off"]["avg"] < 0
     assert h["now"] == 5.0
+
+
+def test_split_message_keeps_lines_whole():
+    from src.bot.controller import split_message
+    text = "\n".join(f"<b>line {i}</b> " + "x" * 50 for i in range(300))
+    parts = split_message(text, 1000)
+    assert all(len(p) <= 1000 for p in parts) and "\n".join(parts) == text
+    assert all(p.count("<b>") == p.count("</b>") for p in parts)
