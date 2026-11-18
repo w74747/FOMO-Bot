@@ -25,6 +25,8 @@ def test_analyze_runs_end_to_end():
     assert r["trades"] > 0 and r["with_regime"] > 0 and r["real"]
     txt = format_report(r)
     assert "بدون فلتر" in txt and "صفقاتنا الفعلية" in txt
+    from src.analysis.regime import format_age
+    assert sum(st["n"] for _, st in r["by_age"]) == r["trades"] and "آخر 3 أيام" in format_age(r)
 
 
 def test_bounce_entry_model():

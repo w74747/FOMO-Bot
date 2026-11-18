@@ -20,6 +20,8 @@ HOUR = 3600
 MKT_BUCKETS = [(-1e9, -10), (-10, -5), (-5, 0), (0, 5), (5, 1e9)]
 BREADTH_BUCKETS = [(0, 30), (30, 45), (45, 60), (60, 101)]
 SKIP_LEVELS = [-15, -10, -7, -5, -3, 0]
+AGE_BUCKETS = [(0, 3, "آخر 3 أيام"), (3, 7, "3–7 أيام"), (7, 14, "1–2 أسبوع"), (14, 21, "2–3 أسابيع"),
+               (21, 28, "3–4 أسابيع"), (28, 42, "4–6 أسابيع"), (42, 10_000, "أقدم من 6 أسابيع")]
 
 
 def market_index(series: dict[str, list[Candle]], min_coins: int = 8) -> dict[int, dict]:
@@ -111,7 +113,19 @@ def analyze(datasets: list[tuple], params: dict, position_usd: float, fee_usd: f
             real.append({**r, "m24": rg["m24"], "m6": rg["m6"], "breadth": rg["breadth"]})
 
     last_ts = max(index) if index else None
+    # does the edge fade? trades grouped by how long ago they were entered
+    by_age = []
+    if trades and last_ts:
+        for lo, hi, label in AGE_BUCKETS:
+            rows = [t for t in trades if lo * 86400 <= last_ts - t["ts"] < hi * 86400]
+            coins = len({t["pool"] for t in rows})
+            st = _stats([t["ret"] for t in rows])
+            if st["n"]:
+                st["stops"] = sum(1 for t in rows if t["ret"] <= -10) / st["n"] * 100
+                st["coins"] = coins
+            by_age.append((label, st))
     return {
+        "by_age": by_age,
         "coins": len(series), "hours": len(index),
         "trades": len(trades), "with_regime": len(with_rg),
         "by_m24": _bucket(with_rg, "m24", MKT_BUCKETS),
@@ -140,6 +154,17 @@ def _row(label, st):
     if not st["n"]:
         return f"{label}: —"
     return f"{label}: {st['n']} صفقة · فوز {st['win']:.0f}% · متوسط {st['avg']:+.2f}% · مجموع {st['total']:+.0f}%"
+
+
+def format_age(r: dict) -> str:
+    L = ["📅 <b>هل تضعف الاستراتيجية مع الوقت؟</b> (الاختبار الواقعي حسب عمر الصفقة)"]
+    for label, st in r.get("by_age", []):
+        if not st["n"]:
+            L.append(f"• {label}: —")
+            continue
+        L.append(f"• {label}: {st['n']} صفقة/{st['coins']} عملة · فوز {st['win']:.0f}% · "
+                 f"متوسط {st['avg']:+.2f}% · خسارة كبيرة (≤ -10%) {st['stops']:.0f}%")
+    return "\n".join(L)
 
 
 def format_report(r: dict) -> str:
