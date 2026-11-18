@@ -316,3 +316,26 @@ def test_prefilter_marks_low_liquidity_as_paper_only():
     by = {t["mint"]: t for t in kept}
     assert set(by) == {"BIG", "MID"} and by["MID"]["paper_only"] and not by["BIG"]["paper_only"]
     assert [t["mint"] for t in kept] == ["BIG", "MID"] and rej.get("low liquidity") == 1
+
+
+async def test_weak_strategy_health_blocks_live_but_not_paper(env):
+    import time
+    state, db, jup, mon, msgs = env
+
+    class Live:
+        book = "live"
+        bought = 0
+
+        async def enabled(self):
+            return True
+
+        async def buy(self, *a, **k):
+            Live.bought += 1
+            raise AssertionError("health gate must block live")
+
+    mon.brokers["live"] = Live()
+    await state.set_health({"value": 0.5, "n": 40, "prev": 6.0, "ts": time.time()})
+    await step(mon, jup, 0.78)
+    await step(mon, jup, 0.80)
+    assert await state.get_position(MINT) and Live.bought == 0
+    assert any("صحة الاستراتيجية ضعيفة" in m for m in msgs)

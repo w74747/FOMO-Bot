@@ -208,6 +208,8 @@ async def test_monitor_runs_paper_and_live_side_by_side(live):
 
     b, chain, state = live
     msgs = []
+    import time
+    await state.set_health({"value": 6.0, "n": 80, "prev": 5.0, "ts": time.time()})   # healthy phase
 
     async def notify(t):
         msgs.append(t)

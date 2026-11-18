@@ -178,6 +178,11 @@ class Monitor:
                 continue
             if item.get("paper_only") and name != "paper":
                 continue                      # low-liquidity experiment: never real money
+            if name == "live":
+                why = await self.state.health_block(self.s)
+                if why:
+                    blocked[name] = why
+                    continue
             try:
                 opened.append(await broker.buy(item, price, liq, self.params))
             except RiskBlocked as e:

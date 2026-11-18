@@ -136,7 +136,12 @@ async def main():
             if await tg.regime_job(send=True):
                 await state.set_meta("age_v2", "done")
 
+    async def health_once():
+        await asyncio.sleep(45)
+        await scanner.update_health()
+
     tasks = [
+        asyncio.create_task(health_once(), name="health-once"),
         asyncio.create_task(age_analysis_once(), name="age-analysis-once"),
         asyncio.create_task(realistic_opt_once(), name="realistic-opt-once"),
         asyncio.create_task(scanner_loop(scanner, state), name="scanner"),

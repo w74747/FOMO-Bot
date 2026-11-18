@@ -147,6 +147,30 @@ class StateManager:
     async def set_meta(self, key: str, value: str):
         await self.r.set(P + "meta:" + key, value)
 
+    async def set_health(self, h: dict):
+        await self.set_meta("health", json.dumps(h))
+
+    async def get_health(self) -> dict | None:
+        raw = await self.get_meta("health")
+        try:
+            return json.loads(raw) if raw else None
+        except ValueError:
+            return None
+
+    async def health_block(self, s) -> str | None:
+        """Reason why live entries are blocked by the strategy-health gate, or None."""
+        if not getattr(s, "HEALTH_GATE", False):
+            return None
+        h = await self.get_health()
+        if not h or time.time() - h.get("ts", 0) > s.HEALTH_MAX_AGE_H * 3600:
+            return "مؤشر صحة الاستراتيجية غير متوفر بعد (يُحسب مع كل مسح)"
+        if h.get("value") is None:
+            return f"صفقات اختبار قليلة لقياس صحة الاستراتيجية ({h.get('n', 0)})"
+        if h["value"] <= s.HEALTH_MIN_PCT:
+            return (f"صحة الاستراتيجية ضعيفة: متوسط الصفقة مؤخراً {h['value']:+.2f}% "
+                    f"(المطلوب > {s.HEALTH_MIN_PCT:+.0f}%)")
+        return None
+
     async def get_meta(self, key: str) -> str | None:
         return await self.r.get(P + "meta:" + key)
 

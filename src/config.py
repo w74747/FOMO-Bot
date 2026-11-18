@@ -104,7 +104,16 @@ class Settings(BaseSettings):
     # polling delay, and count candle wicks only against us (they rarely show in Jupiter's price)
     BT_REALISTIC: bool = True
     BT_ENTRY_SLIP: float = 0.007
-    KNOWN_COINS_RECHECK: bool = True  # re-check every coin with stored history on each scan
+    KNOWN_COINS_RECHECK: bool = True
+    # strategy health: live entries only while the realistic back-test across ALL stored coins
+    # averaged more than HEALTH_MIN_PCT per trade over the last HEALTH_WINDOW_DAYS (lagged so
+    # those trades are closed). Paper keeps trading regardless, to keep measuring.
+    HEALTH_GATE: bool = True
+    HEALTH_MIN_PCT: float = 2.0
+    HEALTH_WINDOW_DAYS: float = 4.0
+    HEALTH_LAG_DAYS: float = 2.0
+    HEALTH_MIN_TRADES: int = 10
+    HEALTH_MAX_AGE_H: float = 12.0   # older reading = unknown = live blocked  # re-check every coin with stored history on each scan
     LIQUIDITY_DROP_EXIT_PCT: float = 0.40
     LIQUIDITY_CONFIRM_READS: int = 3       # a drop must persist this many readings…
     LIQUIDITY_CONFIRM_SEC: float = 20.0    # …spanning at least this long (filters data blips)

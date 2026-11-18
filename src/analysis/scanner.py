@@ -326,6 +326,33 @@ class Scanner:
             n_candles += len(candles)
         return n_pools, n_candles
 
+    async def update_health(self):
+        """Strategy health: realistic back-test of the current params on every stored coin,
+        averaged over recent (closed) trades. Gates live entries; shown in the scan report."""
+        if not getattr(self.db, "ready", False) or not getattr(self.s, "HEALTH_GATE", False):
+            return
+        import asyncio
+        from concurrent.futures import ProcessPoolExecutor
+        from dataclasses import asdict
+
+        from src.analysis.regime import health_now
+        try:
+            self.params = await load_params(self.state, self.s)
+            datasets = []
+            for p in await self.db.tracked_pools(min_candles=300):
+                candles = await self.db.load_candles(p["pool"])
+                datasets.append((p["pool"], [tuple(c) for c in candles], float(p["liquidity_usd"] or 100_000)))
+            fee = await self.state.tx_fee_usd(self.s)
+            with ProcessPoolExecutor(max_workers=1) as ex:
+                h = await asyncio.get_running_loop().run_in_executor(
+                    ex, health_now, datasets, asdict(self.params), self.s.MAX_POSITION_USD, fee,
+                    bt_kwargs(self.s), time.time(), self.s.HEALTH_WINDOW_DAYS, self.s.HEALTH_LAG_DAYS,
+                    self.s.HEALTH_MIN_TRADES)
+            await self.state.set_health(h)
+            logger.info(f"strategy health: {h}")
+        except Exception as e:
+            logger.exception(f"health update failed: {e}")
+
     async def run(self) -> list[Analysis]:
         if self.running:
             logger.info("Scan already running; skipped.")
@@ -379,9 +406,12 @@ class Scanner:
                         + paper_ok[: getattr(self.s, "PAPER_ONLY_WATCH_SIZE", 0)])
             accepted = await self._update_watchlist(accepted)
             await self.state.mark_scan()
+            await self.update_health()
             logger.info(f"Scan done in {time.time() - started:.0f}s: {len(accepted)} on watchlist")
             if self.notify:
-                await self.notify(self._report(n_seen, len(kept), results, accepted, time.time() - started, rejected))
+                text = self._report(n_seen, len(kept), results, accepted, time.time() - started, rejected)
+                text += "\n" + await self.health_line()
+                await self.notify(text)
             return results
         finally:
             self.running = False
@@ -475,6 +505,20 @@ class Scanner:
                 new[mint] = {**old[mint], "status": "holding"}
         await self.state.replace_watchlist(new)
         return added
+
+    async def health_line(self) -> str:
+        if not getattr(self.s, "HEALTH_GATE", False):
+            return ""
+        h = await self.state.get_health()
+        if not h or h.get("value") is None:
+            return "🩺 صحة الاستراتيجية: غير متوفرة بعد"
+        ok = h["value"] > self.s.HEALTH_MIN_PCT
+        trend = ""
+        if h.get("prev") is not None:
+            trend = " ↗" if h["value"] > h["prev"] else " ↘"
+        return (f"🩺 صحة الاستراتيجية: متوسط الصفقة في الاختبار مؤخراً <b>{h['value']:+.2f}%</b>{trend} "
+                f"({h['n']} صفقة) — " + ("✅ تسمح بالحقيقي" if ok else
+                f"⛔ الحقيقي محجوب حتى تتجاوز {self.s.HEALTH_MIN_PCT:+.0f}% (الورقي مستمر)"))
 
     def _report(self, n_pools, n_kept, results, accepted, secs, prefilter_rejected=None) -> str:
         from html import escape

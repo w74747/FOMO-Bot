@@ -212,6 +212,10 @@ class TelegramController:
             lpnl = await self.state.get_daily_pnl("live")
             lines.append(f"💰 الحقيقي: <b>{'يعمل' if on else 'متوقف'}</b> · مراكز {len(lp)}/{self.s.LIVE_MAX_OPEN_POSITIONS} · "
                          f"اليوم {lpnl:+.2f}$ (الحد −{self.s.LIVE_DAILY_LOSS_USD:.0f}$) · صفقة {self.s.LIVE_POSITION_USD:.0f}$")
+            why = await self.state.health_block(self.s)
+            h = await self.state.get_health()
+            val = f"{h['value']:+.2f}%" if h and h.get("value") is not None else "—"
+            lines.append(f"🩺 صحة الاستراتيجية: {val} — " + (f"⛔ {escape(why)}" if why else "✅ تسمح بالحقيقي"))
         else:
             lines.append("💰 الحقيقي: غير مهيأ (يحتاج WALLET_PRIVATE_KEY وSOLANA_RPC_URL وJUPITER_API_KEY)")
         return "\n".join(lines)

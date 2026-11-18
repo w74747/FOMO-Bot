@@ -76,3 +76,25 @@ def test_split_message_keeps_lines_whole():
     parts = split_message(text, 1000)
     assert all(len(p) <= 1000 for p in parts) and "\n".join(parts) == text
     assert all(p.count("<b>") == p.count("</b>") for p in parts)
+
+
+async def test_health_gate_blocks_live_only_when_weak():
+    import time
+    import fakeredis.aioredis as fr
+    from src.core.state import StateManager
+    st = StateManager(client=fr.FakeRedis(decode_responses=True))
+    assert "غير متوفر" in await st.health_block(settings)              # unknown -> blocked
+    await st.set_health({"value": 0.55, "n": 47, "prev": 6.0, "ts": time.time()})
+    assert "ضعيفة" in await st.health_block(settings)
+    await st.set_health({"value": 6.0, "n": 89, "prev": 1.0, "ts": time.time()})
+    assert await st.health_block(settings) is None
+    await st.set_health({"value": 6.0, "n": 89, "prev": 1.0, "ts": time.time() - 13 * 3600})
+    assert await st.health_block(settings) is not None                  # stale reading
+
+
+def test_health_now_window():
+    from src.analysis.regime import health_now
+    ds = [(f"pool{i}", [tuple(c) for c in wave_candles(hours=700, period=30 + i)], 300_000) for i in range(6)]
+    last = max(c[0] for _, cs, _ in ds for c in cs)
+    h = health_now(ds, asdict(StrategyParams.from_settings(settings)), 20, 0.02, {}, last, 10, 0, 1)
+    assert h["n"] >= 1 and h["value"] is not None and h["ts"] == last

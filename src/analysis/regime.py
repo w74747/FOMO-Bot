@@ -280,3 +280,22 @@ def format_entry_models(rows: list[dict], real: list[dict] | None = None) -> str
     if real:
         L += ["", _row("📍 صفقاتنا الفعلية", _stats([t["ret"] for t in real]))]
     return "\n".join(L)
+
+
+
+def health_now(datasets: list[tuple], params: dict, position_usd: float, fee_usd: float,
+               bt_kw: dict, now_ts: float, window_days: float, lag_days: float,
+               min_trades: int) -> dict:
+    """Average realistic back-test trade over [now - lag - window, now - lag) across all coins."""
+    known = {f.name for f in fields(StrategyParams)}
+    p = StrategyParams(**{k: v for k, v in params.items() if k in known})
+    lo, hi = now_ts - (lag_days + window_days) * DAY, now_ts - lag_days * DAY
+    rets, prev = [], []
+    for _, cs, liq in datasets:
+        log: list = []
+        backtest(clean_candles([Candle(*c) for c in cs]), p.zigzag_pct, p, liq, position_usd,
+                 tx_fee_usd=fee_usd, trade_log=log, **(bt_kw or {}))
+        rets += [r * 100 for ts, r in log if lo <= ts < hi]
+        prev += [r * 100 for ts, r in log if lo - window_days * DAY <= ts < lo]
+    return {"value": statistics.mean(rets) if len(rets) >= min_trades else None, "n": len(rets),
+            "prev": statistics.mean(prev) if len(prev) >= min_trades else None, "ts": now_ts}
