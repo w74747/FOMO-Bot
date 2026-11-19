@@ -76,6 +76,8 @@ def backtest(
     bounce_pct: float | None = None,
     entry_slip: float = 0.0,
     body_only: bool = False,
+    trade_detail: list | None = None,
+    level_log: dict | None = None,
 ) -> BacktestResult:
     """`bounce_pct` (optional) models the live entry: after the price touches the entry level the
     bot waits for a bounce of `bounce_pct` off the lowest price since, then buys `entry_slip`
@@ -128,6 +130,11 @@ def backtest(
             if bar.h > ref_high:
                 ref_high = bar.h
                 blocked_until_new_high = False
+            if level_log is not None:
+                lv0 = levels(ref_high, stats.median_drop, stats.median_rise, params)
+                level_log[bar.ts] = {"entry": lv0["entry"], "stop": lv0["stop"], "ref_high": ref_high,
+                                     "tradeable": tradeable, "blocked": blocked_until_new_high,
+                                     "armed": armed_low is not None, "low": bar.l, "body_low": fb.l}
             if blocked_until_new_high or not tradeable:
                 continue
             lv = levels(ref_high, stats.median_drop, stats.median_rise, params)
@@ -170,6 +177,7 @@ def backtest(
                 "peak": fill,
                 "trail": trail_pct(stats.median_drop, params),
                 "opened": i,
+                "lv_entry": lv["entry"], "ref_high": ref_high,
                 "time_stop": int(time_stop_hours(stats.avg_cycle_hours, params.max_cycle_hours,
                                                  params.time_stop_factor)),
             }
@@ -178,13 +186,19 @@ def backtest(
                 returns.append(-fee + (pos["stop"] - fill) / fill - 2 * cost_side - fee)
                 if trade_log is not None:
                     trade_log.append((bar.ts, returns[-1]))
+                if trade_detail is not None:
+                    trade_detail.append({"entry_ts": bar.ts, "exit_ts": bar.ts, "fill": fill, "ret": returns[-1],
+                                         "reason": "stop (same hour)", "lv_entry": lv["entry"], "ref_high": ref_high,
+                                         "stop": pos["stop"], "tp1": pos["tp1"]})
                 pos, ref_high, blocked_until_new_high = None, bar.h, False
             continue
 
         # manage open position (stop is checked BEFORE using this bar's high: conservative)
         e = pos["entry"]
         closed = False
+        reason = None
         if bar.l <= pos["stop"]:
+            reason = "trailing" if pos["half"] else "stop"
             px = min(pos["stop"], bar.o)
             part = 0.5 if pos["half"] else 1.0
             pos["realized"] += part * ((px - e) / e - 2 * cost_side) - fee
@@ -197,7 +211,7 @@ def backtest(
                 pos["stop"] = trailing_stop(max(pos["stop"], e), e, pos["peak"], pos["tp2"], pos["trail"])
             elif i - pos["opened"] >= pos["time_stop"]:
                 pos["realized"] += (bar.c - e) / e - 2 * cost_side - fee
-                closed = True
+                closed, reason = True, "time"
         else:
             pos["peak"] = max(pos["peak"], fb.h)
             pos["stop"] = trailing_stop(pos["stop"], e, pos["peak"], pos["tp2"], pos["trail"])
@@ -205,6 +219,11 @@ def backtest(
             returns.append(pos["realized"])
             if trade_log is not None:
                 trade_log.append((candles[pos["opened"]].ts, pos["realized"]))
+            if trade_detail is not None:
+                trade_detail.append({"entry_ts": candles[pos["opened"]].ts, "exit_ts": bar.ts, "fill": e,
+                                     "ret": pos["realized"], "reason": reason + ("+tp1" if pos["half"] and reason != "trailing" else ""),
+                                     "lv_entry": pos["lv_entry"], "ref_high": pos["ref_high"],
+                                     "stop": pos["stop"], "tp1": pos["tp1"]})
             pos = None
             ref_high = bar.h
             blocked_until_new_high = False

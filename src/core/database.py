@@ -67,6 +67,12 @@ CREATE INDEX IF NOT EXISTS idx_closed_time ON closed_positions (closed_at);
 ALTER TABLE closed_positions ADD COLUMN IF NOT EXISTS entry_gap_pct DOUBLE PRECISION;
 ALTER TABLE closed_positions ADD COLUMN IF NOT EXISTS exit_gap_pct DOUBLE PRECISION;
 ALTER TABLE closed_positions ADD COLUMN IF NOT EXISTS tier TEXT;
+CREATE TABLE IF NOT EXISTS jup_prices (
+    mint TEXT NOT NULL,
+    ts BIGINT NOT NULL,
+    price DOUBLE PRECISION NOT NULL,
+    PRIMARY KEY (mint, ts)
+);
 """
 
 
@@ -209,6 +215,35 @@ class Database:
         return await self.pool.fetchval(
             "SELECT COUNT(*) FROM closed_positions WHERE mint=$1 AND exit_reason='وقف خسارة' "
             "AND closed_at >= NOW() - make_interval(days => $2)", mint, int(days))
+
+    async def save_jup_prices(self, ts: int, prices: dict[str, float]):
+        if not self.pool or not prices:
+            return
+        try:
+            await self.pool.executemany(
+                "INSERT INTO jup_prices (mint, ts, price) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+                [(m, ts, p) for m, p in prices.items()])
+        except Exception as e:
+            logger.error(f"save_jup_prices failed: {e}")
+
+    async def jup_hourly(self, mint: str) -> list[tuple]:
+        """Hourly OHLC built from our 1-minute Jupiter samples: (ts, o, h, l, c, samples)."""
+        if not self.pool:
+            return []
+        rows = await self.pool.fetch(
+            "SELECT ts / 3600 * 3600 AS h, (array_agg(price ORDER BY ts))[1] AS o, MAX(price) AS hi, "
+            "MIN(price) AS lo, (array_agg(price ORDER BY ts DESC))[1] AS c, COUNT(*) AS n "
+            "FROM jup_prices WHERE mint=$1 GROUP BY 1 ORDER BY 1", mint)
+        return [(r["h"], r["o"], r["hi"], r["lo"], r["c"], r["n"]) for r in rows]
+
+    async def all_trades(self, mode: str | None = None) -> list[dict]:
+        if not self.pool:
+            return []
+        if mode:
+            rows = await self.pool.fetch("SELECT * FROM paper_trades WHERE mode=$1 ORDER BY created_at", mode)
+        else:
+            rows = await self.pool.fetch("SELECT * FROM paper_trades ORDER BY created_at")
+        return [dict(r) for r in rows]
 
     async def recent_trades(self, limit: int = 10) -> list[dict]:
         if not self.pool:

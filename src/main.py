@@ -138,9 +138,38 @@ async def main():
             if await tg.regime_job(send=True):
                 await state.set_meta("age_v2", "done")
 
+    async def reconcile_once():
+        await asyncio.sleep(150)
+        if db.ready and not await state.get_meta("rec_v1") and tg._guard("reconcile"):
+            if await tg.reconcile_job(send=True):
+                await state.set_meta("rec_v1", "done")
+
     async def health_once():
         await asyncio.sleep(45)
         await scanner.update_health()
+
+    async def price_recorder():
+        """Every minute: Jupiter price (what we actually trade at) for watched/held coins and
+        the 100 most liquid coins with candle history, to compare with the pool candles."""
+        await asyncio.sleep(30)
+        universe, refreshed = [], 0.0
+        while True:
+            try:
+                if time.time() - refreshed > 3600 and db.ready:
+                    pools = sorted(await db.tracked_pools(min_candles=300),
+                                   key=lambda p: -(p.get("liquidity_usd") or 0))
+                    universe = list(dict.fromkeys(p["mint"] for p in pools))[:100]
+                    refreshed = time.time()
+                watch = list((await state.get_watchlist()).keys())
+                held = list(await state.held_mints())
+                mints = list(dict.fromkeys(held + watch + universe))
+                if mints and db.ready:
+                    px = await jupiter.prices(mints)
+                    await db.save_jup_prices(int(time.time()) // 60 * 60,
+                                             {m: v["price"] for m, v in px.items() if v.get("price")})
+            except Exception as e:
+                logger.warning(f"price recorder: {e}")
+            await asyncio.sleep(60 - time.time() % 60)
 
     async def autopilot_loop():
         await asyncio.sleep(60)
@@ -153,7 +182,9 @@ async def main():
 
     tasks = [
         asyncio.create_task(health_once(), name="health-once"),
+        asyncio.create_task(reconcile_once(), name="reconcile-once"),
         asyncio.create_task(autopilot_loop(), name="autopilot"),
+        asyncio.create_task(price_recorder(), name="price-recorder"),
         asyncio.create_task(age_analysis_once(), name="age-analysis-once"),
         asyncio.create_task(realistic_opt_once(), name="realistic-opt-once"),
         asyncio.create_task(scanner_loop(scanner, state), name="scanner"),

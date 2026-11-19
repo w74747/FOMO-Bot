@@ -57,6 +57,7 @@ COMMANDS = [
     ("optimize", "اختبار مئات الإعدادات على البيانات المخزنة"),
     ("apply", "تطبيق إعداد من نتائج /optimize: /apply 1"),
     ("regime", "هل حالة السوق العامة تؤثر على نجاح الصفقات؟"),
+    ("reconcile", "مطابقة صفقاتنا الفعلية مع الاختبار صفقة بصفقة"),
     ("params", "الإعدادات الحالية للاستراتيجية"),
     ("resetparams", "العودة للإعدادات الافتراضية"),
     ("wallet", "المحفظة الحقيقية والرصيد"),
@@ -122,7 +123,7 @@ class TelegramController:
             "scan": self.cmd_scan, "token": self.cmd_token, "pause": self.cmd_pause,
             "resume": self.cmd_resume, "closeall": self.cmd_closeall, "report": self.cmd_report,
             "collect": self.cmd_collect, "optimize": self.cmd_optimize, "apply": self.cmd_apply,
-            "regime": self.cmd_regime,
+            "regime": self.cmd_regime, "reconcile": self.cmd_reconcile,
             "params": self.cmd_params, "resetparams": self.cmd_resetparams,
             "watch": self.cmd_watch, "unwatch": self.cmd_unwatch, "mylist": self.cmd_mylist,
             "ban": self.cmd_ban, "unban": self.cmd_unban,
@@ -453,6 +454,69 @@ class TelegramController:
             return
         await self._reply(update, "🌡 بدأ تحليل أثر حالة السوق… ستصلك النتيجة هنا (دقيقة أو اثنتان).")
         self._spawn(self.regime_job(send=True))
+
+    async def cmd_reconcile(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.db.ready:
+            await self._reply(update, "قاعدة البيانات غير متصلة.")
+            return
+        if not self._guard("reconcile"):
+            await self._reply(update, "⏳ المطابقة تعمل بالفعل.")
+            return
+        await self._reply(update, "🔍 بدأت مطابقة الصفقات مع الاختبار… (دقيقة تقريباً)")
+        self._spawn(self.reconcile_job(send=True))
+
+    async def reconcile_job(self, send: bool = True) -> str | None:
+        from src.analysis.reconcile import format_reconcile, reconcile
+        try:
+            closes = [r for r in strategy_closes(await self.db.closed_positions())
+                      if (r.get("mode") or "paper") == "paper"]
+            trades = await self.db.all_trades("paper")
+            actual = []
+            for c in closes:
+                o = c["opened_at"].timestamp() if c.get("opened_at") else None
+                e = c["closed_at"].timestamp() if c.get("closed_at") else None
+                if not o or not e:
+                    continue
+                mine = [t for t in trades if t["mint"] == c["mint"]]
+                buy = min((t for t in mine if t["side"] == "BUY"),
+                          key=lambda t: abs(t["created_at"].timestamp() - o), default=None)
+                sells = [t for t in mine if t["side"] == "SELL" and o - 60 <= t["created_at"].timestamp() <= e + 60]
+                actual.append({"mint": c["mint"], "symbol": c.get("symbol"), "opened_at": o, "closed_at": e,
+                               "ret": c.get("return_pct") or 0.0, "reason": c.get("exit_reason"),
+                               "mode": c.get("tier") or "paper",
+                               "entry_price": buy["price"] if buy and abs(buy["created_at"].timestamp() - o) < 300 else None,
+                               "exit_price": sells[-1]["price"] if sells else None})
+            pools = await self.db.tracked_pools(min_candles=100)
+            best = {}
+            for p in pools:
+                if p["mint"] in {a["mint"] for a in actual}:
+                    cur = best.get(p["mint"])
+                    if not cur or (p.get("liquidity_usd") or 0) > (cur.get("liquidity_usd") or 0):
+                        best[p["mint"]] = p
+            datasets = {}
+            for mint, p in best.items():
+                candles = await self.db.load_candles(p["pool"])
+                datasets[mint] = ([tuple(c) for c in candles], float(p["liquidity_usd"] or 100_000))
+            params = await load_params(self.state, self.s)
+            fee_usd = await self.state.tx_fee_usd(self.s)
+            loop = asyncio.get_running_loop()
+            with ProcessPoolExecutor(max_workers=1) as ex:
+                result = await loop.run_in_executor(ex, reconcile, actual, datasets, asdict(params),
+                                                    self.s.MAX_POSITION_USD, fee_usd, bt_kwargs(self.s))
+            text = format_reconcile(result)
+            logger.info("RECONCILE REPORT\n" + text)
+            for r in result["rows"]:
+                logger.info(f"RECONCILE ROW { {k: v for k, v in r.items() if k != 'mint'} }")
+            if send:
+                await self.send(text)
+            return text
+        except Exception as e:
+            logger.exception("reconcile failed")
+            if send:
+                await self.send(f"❌ فشلت المطابقة: {escape(str(e))}")
+            return None
+        finally:
+            self._busy.discard("reconcile")
 
     async def regime_job(self, send: bool = True) -> str | None:
         from src.analysis.regime import analyze, entry_models, format_age, format_entry_models, format_health, format_report
