@@ -125,7 +125,7 @@ class Settings(BaseSettings):
     AUTO_STOP_PAPER_N: int = 8           # the last N paper closes average below 0%
     AUTO_KILL_USD: float = 15.0          # live drawdown from its peak since /live auto: hard stop
     AUTO_MIN_SWITCH_H: float = 12.0      # no restart within this many hours of the last switch
-    AUTO_PAPER_SINCE: str = "2026-11-17T21:50:00+00:00"   # realistic coin selection went live  # re-check every coin with stored history on each scan
+    AUTO_PAPER_SINCE: str = "2026-11-19T06:15:00+00:00"   # shadow back-test gate went live (trades OPENED after)  # re-check every coin with stored history on each scan
     LIQUIDITY_DROP_EXIT_PCT: float = 0.40
     LIQUIDITY_CONFIRM_READS: int = 3       # a drop must persist this many readings…
     LIQUIDITY_CONFIRM_SEC: float = 20.0    # …spanning at least this long (filters data blips)

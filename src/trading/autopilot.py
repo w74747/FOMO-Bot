@@ -16,8 +16,8 @@ from src.bot.report import strategy_closes
 P = "fb:"
 
 
-def _ts(r: dict) -> float:
-    v = r.get("closed_at")
+def _ts(r: dict, key: str = "closed_at") -> float:
+    v = r.get(key)
     if v is None:
         return 0.0
     return v.timestamp() if hasattr(v, "timestamp") else float(v)
@@ -58,7 +58,7 @@ class Autopilot:
         fresh = bool(h) and time.time() - h.get("ts", 0) <= self.s.HEALTH_MAX_AGE_H * 3600
         rows = strategy_closes(await self.db.closed_positions()) if getattr(self.db, "ready", True) else []
         paper = [r for r in rows if (r.get("mode") or "paper") == "paper" and r.get("tier") != "low_liq"
-                 and _ts(r) >= self.since]
+                 and _ts(r, "opened_at") >= self.since]
         paper.sort(key=_ts)
         auto_since = float(await self.state.r.get(P + "live:auto_since") or time.time())
         live = sorted((r for r in rows if r.get("mode") == "live" and _ts(r) >= auto_since), key=_ts)

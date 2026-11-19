@@ -22,6 +22,7 @@ class DB:
 
 def paper(ret, mins_ago=10, tier=None):
     return {"mode": "paper", "return_pct": ret, "pnl_usd": ret / 5, "exit_reason": "وقف خسارة",
+            "opened_at": NOW - timedelta(minutes=mins_ago + 60),
             "closed_at": NOW - timedelta(minutes=mins_ago), "tier": tier}
 
 
@@ -87,3 +88,12 @@ async def test_manual_mode_is_untouched():
     ap = Autopilot(st, DB(), settings)
     await st.set_live_enabled(True)
     assert await ap.evaluate() == "" and await st.live_enabled()
+
+
+
+async def test_trades_opened_before_the_shadow_gate_do_not_count():
+    st, db, ap, msgs = await setup(health=6.0)
+    old = paper(-20.0, 10)
+    old["opened_at"] = ap.since - 3600            # opened under the old logic, closed later
+    db.rows = [old] + [paper(3.0, i) for i in range(9)]
+    assert "9/10" in await ap.evaluate()
