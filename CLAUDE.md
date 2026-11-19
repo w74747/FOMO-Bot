@@ -14,7 +14,8 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
 - Railway: service FOMO-Bot + Postgres + Redis. `main` auto-deploys. Health server :8080.
 - Data: Jupiter Tokens V2 (discovery), Price V3 (live prices), Swap API V2 (/order ->
   sign -> /execute); GeckoTerminal OHLCV (CoinGecko Demo key); Helius RPC (mint/freeze
-  checks, balances). Birdeye disabled.
+  checks, balances). Birdeye is optional (top-10 holder check in safety.py) and off unless
+  BIRDEYE_API_KEY is set; holder concentration comes from Jupiter audit data.
 
 ## Layout
 - src/config.py — all settings (env overrides on Railway)
@@ -49,12 +50,25 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
 - Ask Abdullah before destructive Railway actions or before turning live trading on.
 
 ## Workflow
+- Setup: Python 3.11 venv (`.venv/`, git-ignored), then
+  `pip install -r requirements.txt -r requirements-dev.txt pyflakes`
+  (pyflakes is not in requirements-dev.txt). Tests need no network, Redis or Postgres
+  (fakeredis).
 - Tests: `python -m pytest -q` and `python -m pyflakes src tests` (79 passing as of
   2026-11-19). Check for "FAILED" explicitly before committing.
 - Commit to feature/wave-scanner, push it and push it to main (Railway deploys main).
   After deploy, read Railway logs (startup, "strategy health", "shadow:" lines).
 - Telegram "Conflict: terminated by other getUpdates" right after a deploy is the old
   instance shutting down — harmless.
+
+## Project note (Obsidian vault) — update every session
+- Note: `C:\Users\abaom\OneDrive\Desktop\Abdullah's Brain\Projects\FOMO-Bot.md`
+  (hand-off copy of this file: `...\Projects\FOMO-Bot - Claude Code Handoff.md`).
+- At the end of EVERY session, update the note in Arabic: frontmatter `updated:`, the
+  "الحالة" section, a dated entry at the top of "السجل" (newest first), and any new
+  decision under "القرارات" / next steps under "الخطوات القادمة".
+- Never write keys, tokens or WALLET_PRIVATE_KEY into the note (public wallet address only).
+- If this CLAUDE.md changes, update the hand-off note's copy too.
 
 ## Current state (2026-11-19)
 - Live paused; autopilot on (/live auto) waiting for 10 paper trades opened after
