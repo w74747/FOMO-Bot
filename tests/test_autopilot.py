@@ -33,6 +33,7 @@ async def setup(health=None):
     async def notify(t):
         msgs.append(t)
     ap = Autopilot(st, db, settings, notify)
+    ap.since = (NOW - timedelta(days=2)).timestamp()      # independent of the real clock
     if health is not None:
         await st.set_health({"value": health, "n": 40, "prev": 1.0, "ts": time.time()})
     await ap.enable()
