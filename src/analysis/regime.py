@@ -299,3 +299,39 @@ def health_now(datasets: list[tuple], params: dict, position_usd: float, fee_usd
         prev += [r * 100 for ts, r in log if lo - window_days * DAY <= ts < lo]
     return {"value": statistics.mean(rets) if len(rets) >= min_trades else None, "n": len(rets),
             "prev": statistics.mean(prev) if len(prev) >= min_trades else None, "ts": now_ts}
+
+
+
+EXIT_MODELS = [("الحالي: نصف عند الهدف 1 + الباقي بوقف متحرك", None)] + [
+    (f"هدف واحد متحرك فقط: بيع الكل عند هبوط {int(t * 100)}% من أعلى سعر", t)
+    for t in (0.05, 0.08, 0.12, 0.16, 0.20)]
+
+
+def exit_models(datasets: list[tuple], params: dict, position_usd: float, fee_usd: float, bt_kw: dict) -> list[dict]:
+    known = {f.name for f in fields(StrategyParams)}
+    p = StrategyParams(**{k: v for k, v in params.items() if k in known})
+    series = [(pool, clean_candles([Candle(*c) for c in cs]), liq) for pool, cs, liq in datasets]
+    out = []
+    for name, trail in EXIT_MODELS:
+        per = {"A": [], "B": []}
+        for pool, cs, liq in series:
+            r = backtest(cs, p.zigzag_pct, p, liq, position_usd, tx_fee_usd=fee_usd, trail_only=trail, **(bt_kw or {}))
+            per[split_of(pool)] += [x * 100 for x in r.returns]
+        allr = per["A"] + per["B"]
+        st = _stats(allr)
+        if st["n"]:
+            wins, losses = [x for x in allr if x > 0], [x for x in allr if x <= 0]
+            st["avg_win"] = statistics.mean(wins) if wins else 0.0
+            st["avg_loss"] = statistics.mean(losses) if losses else 0.0
+        out.append({"name": name, "all": st, "a": _stats(per["A"]), "b": _stats(per["B"])})
+    return out
+
+
+def format_exit_models(rows: list[dict]) -> str:
+    L = ["🎯 <b>طريقة الخروج</b> (الاختبار الواقعي، نفس الدخول)"]
+    for r in rows:
+        a = r["all"]
+        L.append(f"<b>{r['name']}</b>")
+        L.append(_row("• الكل", a) + (f" · متوسط الربح {a['avg_win']:+.1f}% / الخسارة {a['avg_loss']:+.1f}%" if a["n"] else ""))
+        L.append(f"• A {r['a'].get('avg', 0):+.2f}% · B {r['b'].get('avg', 0):+.2f}%")
+    return "\n".join(L)

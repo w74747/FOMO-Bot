@@ -1,3 +1,4 @@
+import time
 import fakeredis.aioredis
 import pytest
 
@@ -34,7 +35,8 @@ def watch_item(ref_high=1.0):
     lv = levels(ref_high, 0.25, 0.35, StrategyParams.from_settings(settings))
     return {"mint": MINT, "symbol": "TEST", "liquidity": 500_000, "score": 80, "median_drop": 0.25,
             "median_rise": 0.35, "avg_cycle_hours": 36, "time_stop_hours": 54, "reward_risk": 2,
-            "status": "waiting", "local_min": None, **lv}
+            "status": "waiting", "local_min": None, **lv,
+            "shadow": {"ok": True, "why": "", "ts": time.time()}}
 
 
 @pytest.fixture
@@ -339,3 +341,19 @@ async def test_weak_strategy_health_blocks_live_but_not_paper(env):
     await step(mon, jup, 0.80)
     assert await state.get_position(MINT) and Live.bought == 0
     assert any("صحة الاستراتيجية ضعيفة" in m for m in msgs)
+
+
+
+async def test_shadow_gate_blocks_what_the_backtest_would_not_trade(env):
+    state, db, jup, mon, msgs = env
+    await state.set_watch_item(MINT, {**watch_item(), "shadow": {"ok": False, "why": "bt_blocked", "ts": time.time()}})
+    await step(mon, jup, 0.78)
+    await step(mon, jup, 0.80)
+    assert await state.get_position(MINT) is None
+    item = (await state.get_watchlist())[MINT]
+    assert item["status"] == "waiting"
+    # stale verdict = unknown = no entry
+    await state.set_watch_item(MINT, {**watch_item(), "shadow": {"ok": True, "why": "", "ts": time.time() - 4 * 3600}})
+    await step(mon, jup, 0.78)
+    await step(mon, jup, 0.80)
+    assert await state.get_position(MINT) is None

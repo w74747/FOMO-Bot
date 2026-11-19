@@ -143,7 +143,11 @@ class Monitor:
             status = "waiting"
             item.update(status="waiting", local_min=None)
             changed = True
-        if status == "waiting" and price <= item["entry"]:
+        shadow_ok = self._shadow_ok(item)
+        if not shadow_ok and status == "armed":
+            item.update(status="waiting", local_min=None)     # the back-test would not trade it now
+            status, changed = "waiting", True
+        if status == "waiting" and price <= item["entry"] and shadow_ok:
             item.update(status="armed", local_min=price)
             changed = True
             await self._notify_item(item, 
@@ -169,6 +173,15 @@ class Monitor:
                     return
         if changed:
             await self.state.set_watch_item(mint, item)
+
+    def _shadow_ok(self, item: dict) -> bool:
+        """Only trade what the back-test would trade right now (fresh shadow verdict required)."""
+        if not getattr(self.s, "SHADOW_GATE", False):
+            return True
+        sh = item.get("shadow")
+        if not sh or time.time() - sh.get("ts", 0) > self.s.SHADOW_MAX_AGE_MIN * 60:
+            return False
+        return bool(sh.get("ok"))
 
     async def _enter(self, item: dict, price: float, liq: float | None):
         sym = escape(item.get("symbol", "?"))

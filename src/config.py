@@ -108,6 +108,9 @@ class Settings(BaseSettings):
     # strategy health: live entries only while the realistic back-test across ALL stored coins
     # averaged more than HEALTH_MIN_PCT per trade over the last HEALTH_WINDOW_DAYS (lagged so
     # those trades are closed). Paper keeps trading regardless, to keep measuring.
+    SHADOW_GATE: bool = True          # trade only what the back-test would trade, at its levels
+    SHADOW_EVERY_MIN: float = 60.0
+    SHADOW_MAX_AGE_MIN: float = 150.0 # older verdict = unknown = no new entries
     HEALTH_GATE: bool = True
     HEALTH_MIN_PCT: float = 0.5      # hard floor for any live entry (= autopilot stop level)
     HEALTH_WINDOW_DAYS: float = 4.0

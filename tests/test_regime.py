@@ -98,3 +98,15 @@ def test_health_now_window():
     last = max(c[0] for _, cs, _ in ds for c in cs)
     h = health_now(ds, asdict(StrategyParams.from_settings(settings)), 20, 0.02, {}, last, 10, 0, 1)
     assert h["n"] >= 1 and h["value"] is not None and h["ts"] == last
+
+
+def test_trail_only_exit_and_exit_models():
+    from src.analysis.backtest import backtest
+    from src.analysis.regime import exit_models, format_exit_models
+    p = StrategyParams.from_settings(settings)
+    cs = wave_candles(hours=700, period=30)
+    r = backtest(cs, p.zigzag_pct, p, 300_000, 20, trail_only=0.08, bounce_pct=0.02, body_only=True)
+    assert r.trades > 0
+    ds = [(f"pool{i}", [tuple(c) for c in wave_candles(hours=700, period=30 + i)], 300_000) for i in range(4)]
+    rows = exit_models(ds, asdict(p), 20, 0.02, {"bounce_pct": 0.02, "entry_slip": 0.007, "body_only": True})
+    assert len(rows) == 6 and "هدف واحد متحرك" in format_exit_models(rows)

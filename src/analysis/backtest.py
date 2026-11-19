@@ -78,6 +78,7 @@ def backtest(
     body_only: bool = False,
     trade_detail: list | None = None,
     level_log: dict | None = None,
+    trail_only: float | None = None,
 ) -> BacktestResult:
     """`bounce_pct` (optional) models the live entry: after the price touches the entry level the
     bot waits for a bounce of `bounce_pct` off the lowest price since, then buys `entry_slip`
@@ -134,7 +135,9 @@ def backtest(
                 lv0 = levels(ref_high, stats.median_drop, stats.median_rise, params)
                 level_log[bar.ts] = {"entry": lv0["entry"], "stop": lv0["stop"], "ref_high": ref_high,
                                      "tradeable": tradeable, "blocked": blocked_until_new_high,
-                                     "armed": armed_low is not None, "low": bar.l, "body_low": fb.l}
+                                     "armed": armed_low is not None, "low": bar.l, "body_low": fb.l,
+                                     "median_drop": stats.median_drop, "median_rise": stats.median_rise,
+                                     "avg_cycle_hours": stats.avg_cycle_hours}
             if blocked_until_new_high or not tradeable:
                 continue
             lv = levels(ref_high, stats.median_drop, stats.median_rise, params)
@@ -197,7 +200,20 @@ def backtest(
         e = pos["entry"]
         closed = False
         reason = None
-        if bar.l <= pos["stop"]:
+        if trail_only is not None:
+            # single moving exit: no target; the stop follows the highest price by `trail_only`
+            # (never below the initial stop); whole position sold when it is hit
+            if bar.l <= pos["stop"]:
+                px = min(pos["stop"], bar.o)
+                pos["realized"] += (px - e) / e - 2 * cost_side - fee
+                closed, reason = True, ("trailing" if pos["stop"] > e else "stop")
+            elif pos["stop"] < e and i - pos["opened"] >= pos["time_stop"]:
+                pos["realized"] += (bar.c - e) / e - 2 * cost_side - fee
+                closed, reason = True, "time"
+            else:
+                pos["peak"] = max(pos["peak"], fb.h)
+                pos["stop"] = max(pos["stop"], pos["peak"] * (1 - trail_only))
+        elif bar.l <= pos["stop"]:
             reason = "trailing" if pos["half"] else "stop"
             px = min(pos["stop"], bar.o)
             part = 0.5 if pos["half"] else 1.0

@@ -225,6 +225,7 @@ async def test_monitor_runs_paper_and_live_side_by_side(live):
     mon = Monitor(state, jup, paper, settings, notify, live_broker=b)
     lv = levels(1.0, 0.25, 0.35, StrategyParams.from_settings(settings))
     await state.set_watch_item(MINT, {**ITEM, "score": 80, "avg_cycle_hours": 36, "reward_risk": 2,
+                                      "shadow": {"ok": True, "why": "", "ts": __import__("time").time()},
                                       "status": "waiting", "local_min": None, **lv})
 
     async def step(p):
@@ -241,6 +242,7 @@ async def test_monitor_runs_paper_and_live_side_by_side(live):
     # live ON: both buy on the next signal
     await state.set_live_enabled(True)
     await state.set_watch_item(MINT, {**ITEM, "score": 80, "avg_cycle_hours": 36, "reward_risk": 2,
+                                      "shadow": {"ok": True, "why": "", "ts": __import__("time").time()},
                                       "status": "waiting", "local_min": None, **lv})
     await step(0.78)
     await step(0.80)

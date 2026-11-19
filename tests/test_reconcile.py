@@ -36,3 +36,15 @@ def test_reconcile_matches_backtest_trades_and_flags_data_gaps():
     txt = format_reconcile(r)
     assert "مطابقة" in txt and "لم تصل إليه شموع المجمع" in txt
     assert isinstance(Candle, type)
+
+
+def test_shadow_states():
+    from src.analysis.shadow import shadow_states
+    p = StrategyParams.from_settings(settings)
+    raw = [tuple(c) for c in wave_candles(hours=700, period=30)]
+    res = shadow_states({"M": (raw, 300_000), "S": (raw[:50], 300_000)}, asdict(p), 20, 0.02, KW)
+    assert res["S"] == {"ok": False, "why": "no_history"}
+    m = res["M"]
+    assert set(m) >= {"ok", "why"}
+    if m["ok"]:
+        assert m["stop"] < m["entry"] < m["tp1"] <= m["tp2"] and m["entry"] < m["ref_high"]

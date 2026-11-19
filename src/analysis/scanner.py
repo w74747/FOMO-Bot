@@ -326,6 +326,56 @@ class Scanner:
             n_candles += len(candles)
         return n_pools, n_candles
 
+    async def shadow_refresh(self) -> dict:
+        """Refresh candles of watched coins and apply the back-test's verdict and levels."""
+        if not getattr(self.s, "SHADOW_GATE", False) or not getattr(self.db, "ready", False):
+            return {}
+        import asyncio
+        from concurrent.futures import ProcessPoolExecutor
+        from dataclasses import asdict
+
+        from src.analysis.shadow import shadow_states
+        self.params = await load_params(self.state, self.s)
+        items = await self.state.get_watchlist()
+        datasets = {}
+        for mint, it in items.items():
+            if it.get("status") == "holding" or not it.get("pool"):
+                continue
+            try:
+                from types import SimpleNamespace
+                pool = SimpleNamespace(pool_address=it["pool"], mint=mint, symbol=it.get("symbol", "?"),
+                                       liquidity_usd=float(it.get("liquidity") or 0))
+                candles = await self.get_candles(pool)
+                datasets[mint] = ([tuple(c) for c in candles], float(it.get("liquidity") or 100_000))
+            except Exception as e:
+                logger.warning(f"shadow candles {it.get('symbol')}: {e}")
+        if not datasets:
+            return {}
+        fee = await self.state.tx_fee_usd(self.s)
+        with ProcessPoolExecutor(max_workers=1) as ex:
+            res = await asyncio.get_running_loop().run_in_executor(
+                ex, shadow_states, datasets, asdict(self.params), self.s.MAX_POSITION_USD, fee, bt_kwargs(self.s))
+        now = int(time.time())
+        cur = await self.state.get_watchlist()           # re-read: the monitor may have changed items
+        for mint, v in res.items():
+            it = cur.get(mint)
+            if not it or it.get("status") == "holding":
+                continue
+            it["shadow"] = {"ok": v["ok"], "why": v["why"], "ts": now}
+            if v["ok"]:
+                moved = abs(v["entry"] - it.get("entry", 0)) / max(it.get("entry", 1e-12), 1e-12) > 0.001
+                for k in ("ref_high", "entry", "stop", "tp1", "tp2", "stop_pct", "time_stop_hours",
+                          "median_drop", "median_rise", "avg_cycle_hours"):
+                    it[k] = v[k]
+                if moved and it.get("status") == "armed" and it.get("local_min", 0) > it["entry"]:
+                    it.update(status="waiting", local_min=None)   # the zone moved below the price
+            elif it.get("status") == "armed":
+                it.update(status="waiting", local_min=None)
+            await self.state.set_watch_item(mint, it)
+        logger.info("shadow: " + ", ".join(f"{cur.get(m, {}).get('symbol', m[:6])}="
+                                           f"{'ok' if v['ok'] else v['why']}" for m, v in res.items()))
+        return res
+
     async def update_health(self):
         """Strategy health: realistic back-test of the current params on every stored coin,
         averaged over recent (closed) trades. Gates live entries; shown in the scan report."""
@@ -406,6 +456,7 @@ class Scanner:
                         + paper_ok[: getattr(self.s, "PAPER_ONLY_WATCH_SIZE", 0)])
             accepted = await self._update_watchlist(accepted)
             await self.state.mark_scan()
+            await self.shadow_refresh()
             await self.update_health()
             logger.info(f"Scan done in {time.time() - started:.0f}s: {len(accepted)} on watchlist")
             if self.notify:

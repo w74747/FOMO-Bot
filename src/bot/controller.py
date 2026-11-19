@@ -518,6 +518,27 @@ class TelegramController:
         finally:
             self._busy.discard("reconcile")
 
+    async def exit_job(self) -> str | None:
+        from src.analysis.regime import exit_models, format_exit_models
+        try:
+            pools = await self.db.tracked_pools(min_candles=300)
+            datasets = []
+            for p in pools:
+                candles = await self.db.load_candles(p["pool"])
+                datasets.append((p["pool"], [tuple(c) for c in candles], float(p["liquidity_usd"] or 100_000)))
+            params = await load_params(self.state, self.s)
+            fee_usd = await self.state.tx_fee_usd(self.s)
+            with ProcessPoolExecutor(max_workers=1) as ex:
+                rows = await asyncio.get_running_loop().run_in_executor(
+                    ex, exit_models, datasets, asdict(params), self.s.MAX_POSITION_USD, fee_usd, bt_kwargs(self.s))
+            text = format_exit_models(rows)
+            logger.info("EXIT MODELS\n" + text)
+            await self.send(text)
+            return text
+        except Exception:
+            logger.exception("exit models failed")
+            return None
+
     async def regime_job(self, send: bool = True) -> str | None:
         from src.analysis.regime import analyze, entry_models, format_age, format_entry_models, format_health, format_report
         try:

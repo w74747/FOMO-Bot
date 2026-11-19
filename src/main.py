@@ -144,6 +144,12 @@ async def main():
             if await tg.reconcile_job(send=True):
                 await state.set_meta("rec_v1", "done")
 
+    async def exit_once():
+        await asyncio.sleep(200)
+        if db.ready and not await state.get_meta("exit_v1"):
+            if await tg.exit_job():
+                await state.set_meta("exit_v1", "done")
+
     async def health_once():
         await asyncio.sleep(45)
         await scanner.update_health()
@@ -171,6 +177,16 @@ async def main():
                 logger.warning(f"price recorder: {e}")
             await asyncio.sleep(60 - time.time() % 60)
 
+    async def shadow_loop():
+        """Hourly: refresh watched coins' candles and the back-test's verdict/levels."""
+        await asyncio.sleep(90)
+        while True:
+            try:
+                await scanner.shadow_refresh()
+            except Exception as e:
+                logger.exception(f"shadow refresh failed: {e}")
+            await asyncio.sleep(settings.SHADOW_EVERY_MIN * 60)
+
     async def autopilot_loop():
         await asyncio.sleep(60)
         while autopilot:
@@ -182,9 +198,11 @@ async def main():
 
     tasks = [
         asyncio.create_task(health_once(), name="health-once"),
+        asyncio.create_task(exit_once(), name="exit-once"),
         asyncio.create_task(reconcile_once(), name="reconcile-once"),
         asyncio.create_task(autopilot_loop(), name="autopilot"),
         asyncio.create_task(price_recorder(), name="price-recorder"),
+        asyncio.create_task(shadow_loop(), name="shadow"),
         asyncio.create_task(age_analysis_once(), name="age-analysis-once"),
         asyncio.create_task(realistic_opt_once(), name="realistic-opt-once"),
         asyncio.create_task(scanner_loop(scanner, state), name="scanner"),
