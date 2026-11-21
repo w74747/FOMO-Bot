@@ -49,8 +49,8 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
 - Ask Abdullah before destructive Railway actions or before turning live trading on.
 
 ## Workflow
-- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (79 passing as of
-  2026-11-19). Check for "FAILED" explicitly before committing.
+- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (81 passing as of
+  2026-11-21). Check for "FAILED" explicitly before committing.
 - Commit to feature/wave-scanner, push it and push it to main (Railway deploys main).
   After deploy, read Railway logs (startup, "strategy health", "shadow:" lines).
 - Telegram "Conflict: terminated by other getUpdates" right after a deploy is the old
@@ -69,5 +69,6 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
 ## Open questions / next
 - Does the shadow gate make paper trades profitable? (first 10 trades)
 - Re-test single trailing exit on 1-minute Jupiter prices (jup_prices) after ~1 week.
-- Low-liquidity paper experiment (tier=low_liq): first result -35% (sudden dump).
+- Low-liquidity experiment ENDED 2026-11-21 (3 paper trades, -8.38$: dumps jump through
+  the stop). PAPER_ONLY_MIN_LIQUIDITY_USD=0; coins under 50k$ liquidity are not traded.
 - Possible: require per-coin back-test average >= +2%/trade.

@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     MIN_LIQUIDITY_USD: float = 75_000
     # experiment: coins with liquidity between this and MIN_LIQUIDITY_USD are traded on PAPER
     # only (same safety filters), to learn whether smaller coins are worth trading for real
-    PAPER_ONLY_MIN_LIQUIDITY_USD: float = 20_000   # 0 disables the experiment
+    PAPER_ONLY_MIN_LIQUIDITY_USD: float = 0   # experiment ended 2026-11-21 (3 trades, -8.38$, dumps through the stop); 20_000 re-enables
     PAPER_ONLY_MAX_OPEN: int = 4
     PAPER_ONLY_WATCH_SIZE: int = 10
     MIN_VOLUME_24H_USD: float = 100_000

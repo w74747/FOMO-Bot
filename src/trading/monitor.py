@@ -144,6 +144,8 @@ class Monitor:
             item.update(status="waiting", local_min=None)
             changed = True
         shadow_ok = self._shadow_ok(item)
+        if item.get("paper_only") and not getattr(self.s, "PAPER_ONLY_MIN_LIQUIDITY_USD", 0):
+            shadow_ok = False             # low-liquidity experiment switched off: never enter
         if not shadow_ok and status == "armed":
             item.update(status="waiting", local_min=None)     # the back-test would not trade it now
             status, changed = "waiting", True

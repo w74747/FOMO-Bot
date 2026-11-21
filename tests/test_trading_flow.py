@@ -282,7 +282,8 @@ async def test_entry_and_exit_gaps_are_recorded(env):
     assert reason == "وقف خسارة" and abs(closed["exit_gap_pct"] + 3.0) < 1e-6
 
 
-async def test_low_liquidity_coins_trade_on_paper_only_and_stay_silent(env):
+async def test_low_liquidity_coins_trade_on_paper_only_and_stay_silent(env, monkeypatch):
+    monkeypatch.setattr(settings, "PAPER_ONLY_MIN_LIQUIDITY_USD", 20_000)   # experiment on
     state, db, jup, mon, msgs = env
 
     class Live:
@@ -307,7 +308,8 @@ async def test_low_liquidity_coins_trade_on_paper_only_and_stay_silent(env):
     assert db.closed[-1][0]["paper_only"] and msgs == []
 
 
-def test_prefilter_marks_low_liquidity_as_paper_only():
+def test_prefilter_marks_low_liquidity_as_paper_only(monkeypatch):
+    monkeypatch.setattr(settings, "PAPER_ONLY_MIN_LIQUIDITY_USD", 20_000)
     from src.analysis.scanner import prefilter_tokens
     base = {"symbol": "X", "name": "", "price": 1, "age_days": 30, "volume_24h": 1e6, "holders": 5000,
             "organic_score": 90, "top_holders_pct": 0.1, "mint_disabled": True, "freeze_disabled": True,
@@ -357,3 +359,24 @@ async def test_shadow_gate_blocks_what_the_backtest_would_not_trade(env):
     await step(mon, jup, 0.78)
     await step(mon, jup, 0.80)
     assert await state.get_position(MINT) is None
+
+
+
+async def test_low_liquidity_experiment_off_means_no_entries(env, monkeypatch):
+    monkeypatch.setattr(settings, "PAPER_ONLY_MIN_LIQUIDITY_USD", 0)
+    state, db, jup, mon, msgs = env
+    await state.set_watch_item(MINT, {**watch_item(), "paper_only": True})   # left over from a scan
+    await step(mon, jup, 0.78)
+    await step(mon, jup, 0.80)
+    assert await state.get_position(MINT) is None
+
+
+def test_prefilter_rejects_low_liquidity_when_experiment_off(monkeypatch):
+    monkeypatch.setattr(settings, "PAPER_ONLY_MIN_LIQUIDITY_USD", 0)
+    from src.analysis.scanner import prefilter_tokens
+    base = {"symbol": "X", "name": "", "price": 1, "age_days": 30, "volume_24h": 1e6, "holders": 5000,
+            "organic_score": 90, "top_holders_pct": 0.1, "mint_disabled": True, "freeze_disabled": True,
+            "is_sus": False, "fdv": 1e6, "price_change_24h": 0, "verified": False}
+    kept, rej = prefilter_tokens([{**base, "mint": "BIG", "liquidity": 200_000},
+                                  {**base, "mint": "MID", "liquidity": 30_000}], settings)
+    assert [t["mint"] for t in kept] == ["BIG"] and not kept[0]["paper_only"]
