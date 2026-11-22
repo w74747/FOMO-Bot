@@ -144,6 +144,12 @@ async def main():
             if await tg.reconcile_job(send=True):
                 await state.set_meta("rec_v1", "done")
 
+    async def selection_once():
+        await asyncio.sleep(180)
+        if db.ready and not await state.get_meta("sel_v1"):
+            if await tg.selection_job():
+                await state.set_meta("sel_v1", "done")
+
     async def exit_once():
         await asyncio.sleep(200)
         if db.ready and not await state.get_meta("exit_v1"):
@@ -199,6 +205,7 @@ async def main():
     tasks = [
         asyncio.create_task(health_once(), name="health-once"),
         asyncio.create_task(exit_once(), name="exit-once"),
+        asyncio.create_task(selection_once(), name="selection-once"),
         asyncio.create_task(reconcile_once(), name="reconcile-once"),
         asyncio.create_task(autopilot_loop(), name="autopilot"),
         asyncio.create_task(price_recorder(), name="price-recorder"),

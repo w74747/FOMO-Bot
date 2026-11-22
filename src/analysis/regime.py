@@ -335,3 +335,72 @@ def format_exit_models(rows: list[dict]) -> str:
         L.append(_row("• الكل", a) + (f" · متوسط الربح {a['avg_win']:+.1f}% / الخسارة {a['avg_loss']:+.1f}%" if a["n"] else ""))
         L.append(f"• A {r['a'].get('avg', 0):+.2f}% · B {r['b'].get('avg', 0):+.2f}%")
     return "\n".join(L)
+
+
+
+SELECTION_RULES = [
+    ("الحالي: 3 صفقات + مجموع موجب", lambda r: len(r) >= 3 and sum(r) > 0),
+    ("3 صفقات + متوسط ≥ +2%", lambda r: len(r) >= 3 and statistics.mean(r) >= 2),
+    ("3 صفقات + وسيط موجب", lambda r: len(r) >= 3 and statistics.median(r) > 0),
+    ("3 صفقات + وسيط موجب + متوسط ≥ +2%", lambda r: len(r) >= 3 and statistics.median(r) > 0
+     and statistics.mean(r) >= 2),
+    ("5 صفقات + وسيط موجب + متوسط ≥ +2%", lambda r: len(r) >= 5 and statistics.median(r) > 0
+     and statistics.mean(r) >= 2),
+]
+
+
+def selection_test(datasets: list[tuple], params: dict, position_usd: float, fee_usd: float, bt_kw: dict,
+                   step_days: float = 2.0, hold_days: float = 2.0, lookback_days: float = 30.0,
+                   lag_days: float = 2.0) -> dict:
+    """Out-of-sample test of the per-coin acceptance rule. At every cutoff (every `step_days`),
+    each coin is judged ONLY on its back-test trades entered in the previous `lookback_days`
+    (and at least `lag_days` before the cutoff, so they are closed); the rule's verdict is then
+    scored on the coin's trades entered in the next `hold_days`. Nothing from the future leaks."""
+    known = {f.name for f in fields(StrategyParams)}
+    p = StrategyParams(**{k: v for k, v in params.items() if k in known})
+    logs = []
+    for pool, cs, liq in datasets:
+        log: list = []
+        backtest(clean_candles([Candle(*c) for c in cs]), p.zigzag_pct, p, liq, position_usd,
+                 tx_fee_usd=fee_usd, trade_log=log, **(bt_kw or {}))
+        if log:
+            logs.append((pool, [(ts, r * 100) for ts, r in log]))
+    if not logs:
+        return {"rules": [], "cutoffs": 0}
+    t_min = min(ts for _, lg in logs for ts, _ in lg)
+    t_max = max(ts for _, lg in logs for ts, _ in lg)
+    cutoffs, c = [], t_min + 10 * DAY
+    while c + hold_days * DAY <= t_max:
+        cutoffs.append(c)
+        c += step_days * DAY
+    out = []
+    for name, rule in SELECTION_RULES:
+        res = {"A": [], "B": []}
+        picks = 0
+        for c in cutoffs:
+            for pool, lg in logs:
+                past = [r for ts, r in lg if c - lookback_days * DAY <= ts < c - lag_days * DAY]
+                if not rule(past):
+                    continue
+                fut = [r for ts, r in lg if c <= ts < c + hold_days * DAY]
+                if fut:
+                    picks += 1
+                    res[split_of(pool)] += fut
+        allr = res["A"] + res["B"]
+        out.append({"name": name, "all": _stats(allr), "a": _stats(res["A"]), "b": _stats(res["B"]),
+                    "median": statistics.median(allr) if allr else None, "picks": picks})
+    return {"rules": out, "cutoffs": len(cutoffs), "coins": len(logs)}
+
+
+def format_selection(r: dict) -> str:
+    L = ["🧪 <b>شرط قبول العملة</b> (اختبار خارج العينة: نحكم على العملة بماضيها فقط، ونقيس صفقاتها التالية)",
+         f"{r.get('coins', 0)} عملة · {r.get('cutoffs', 0)} نقطة قرار (كل يومين)"]
+    for x in r.get("rules", []):
+        a = x["all"]
+        if not a["n"]:
+            L.append(f"<b>{x['name']}</b>: لا صفقات")
+            continue
+        L.append(f"<b>{x['name']}</b>")
+        L.append(_row("• الصفقات التالية", a) + f" · وسيط {x['median']:+.1f}%")
+        L.append(f"• A {x['a'].get('avg', 0):+.2f}% ({x['a']['n']}) · B {x['b'].get('avg', 0):+.2f}% ({x['b']['n']})")
+    return "\n".join(L)

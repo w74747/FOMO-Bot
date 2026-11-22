@@ -124,3 +124,12 @@ async def test_health_line_shows_live_state():
     await st.set_live_enabled(True)
     line = await sc.health_line()
     assert "الحقيقي ما زال يعمل" in line and "+0.5%" in line
+
+
+def test_selection_test_is_out_of_sample():
+    from src.analysis.regime import format_selection, selection_test
+    ds = [(f"pool{i}", [tuple(c) for c in wave_candles(hours=900, period=26 + i)], 300_000) for i in range(6)]
+    r = selection_test(ds, asdict(StrategyParams.from_settings(settings)), 20, 0.02,
+                       {"bounce_pct": 0.02, "entry_slip": 0.007, "body_only": True})
+    assert r["cutoffs"] > 0 and len(r["rules"]) == 5
+    assert "شرط قبول العملة" in format_selection(r)
