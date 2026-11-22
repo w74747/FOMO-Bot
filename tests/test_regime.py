@@ -110,3 +110,17 @@ def test_trail_only_exit_and_exit_models():
     ds = [(f"pool{i}", [tuple(c) for c in wave_candles(hours=700, period=30 + i)], 300_000) for i in range(4)]
     rows = exit_models(ds, asdict(p), 20, 0.02, {"bounce_pct": 0.02, "entry_slip": 0.007, "body_only": True})
     assert len(rows) == 6 and "هدف واحد متحرك" in format_exit_models(rows)
+
+
+async def test_health_line_shows_live_state():
+    import time
+    import fakeredis.aioredis as fr
+    from src.analysis.scanner import Scanner
+    from src.core.state import StateManager
+    st = StateManager(client=fr.FakeRedis(decode_responses=True))
+    sc = Scanner(None, None, st, None, settings)
+    await st.set_health({"value": 1.69, "n": 47, "prev": 7.7, "ts": time.time()})
+    assert "لا بدء تلقائي" in await sc.health_line()
+    await st.set_live_enabled(True)
+    line = await sc.health_line()
+    assert "الحقيقي ما زال يعمل" in line and "+0.5%" in line

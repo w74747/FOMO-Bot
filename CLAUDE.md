@@ -49,16 +49,17 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
 - Ask Abdullah before destructive Railway actions or before turning live trading on.
 
 ## Workflow
-- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (81 passing as of
-  2026-11-21). Check for "FAILED" explicitly before committing.
+- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (82 passing as of
+  2026-11-22). Check for "FAILED" explicitly before committing.
 - Commit to feature/wave-scanner, push it and push it to main (Railway deploys main).
   After deploy, read Railway logs (startup, "strategy health", "shadow:" lines).
 - Telegram "Conflict: terminated by other getUpdates" right after a deploy is the old
   instance shutting down — harmless.
 
-## Current state (2026-11-19)
-- Live paused; autopilot on (/live auto) waiting for 10 paper trades opened after
-  2026-11-19 06:15 UTC (shadow gate) with average > 0% and health > +2%.
+## Current state (2026-11-22)
+- Autopilot (/live auto) switched LIVE ON on 2026-11-21 21:45 UTC: first 10 paper trades
+  under the shadow gate: 5 wins, +11.04 $, average +5.5%; health +2.69% at the time.
+  Health is falling (+1.69% on 2026-11-22); live stops automatically at <= +0.5%.
 - Railway overrides: MIN_LIQUIDITY_USD=50000, MAX_OPEN_POSITIONS=12 (paper),
   MAX_ANALYZE_PER_SCAN=80, LIVE_POSITION_USD=20, LIVE_MAX_OPEN_POSITIONS=6.
 - Param overrides (Redis): zigzag_pct=0.14, entry_drop_factor=1.0, tp1_factor=0.7,

@@ -567,10 +567,17 @@ class Scanner:
         trend = ""
         if h.get("prev") is not None:
             trend = " ↗" if v > h["prev"] else " ↘"
+        try:
+            live_on = await self.state.live_enabled()
+        except Exception:
+            live_on = False
+        stop_at = getattr(self.s, "AUTO_STOP_HEALTH", self.s.HEALTH_MIN_PCT)
         if v <= self.s.HEALTH_MIN_PCT:
             verdict = "⛔ الحقيقي محجوب (الورقي مستمر)"
         elif v > getattr(self.s, "AUTO_START_HEALTH", 2.0):
-            verdict = "✅ جيدة"
+            verdict = "✅ جيدة" + (" · 💰 الحقيقي يعمل" if live_on else "")
+        elif live_on:
+            verdict = f"⚠️ ضعيفة · 💰 الحقيقي ما زال يعمل (يتوقف تلقائياً عند ≤ {stop_at:+.1f}%)"
         else:
             verdict = "⚠️ ضعيفة: لا بدء تلقائي للحقيقي"
         return (f"🩺 صحة الاستراتيجية: متوسط الصفقة في الاختبار مؤخراً <b>{v:+.2f}%</b>{trend} "
