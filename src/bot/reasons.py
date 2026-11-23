@@ -11,6 +11,7 @@ AR = [
     ("reward/risk too low", "الربح المتوقع لا يغطي المخاطرة بعد التكاليف"),
     ("not enough backtest evidence", "دليل تاريخي غير كافٍ"),
     ("backtest negative", "الاختبار التاريخي خاسر"),
+    ("backtest median trade not positive", "الصفقة المعتادة في الاختبار غير رابحة (الوسيط ≤ 0)"),
     ("score", "التقييم أقل من الحد"),
     ("top holders own", "تركيز ملاك عالٍ"),
     ("top-10 holders own", "تركيز ملاك عالٍ"),

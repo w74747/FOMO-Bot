@@ -1,5 +1,6 @@
 """Scanner: discovers live Solana meme pools, filters them, analyses their waves,
 back-tests the strategy on each, and builds the watchlist."""
+import statistics
 import re
 import time
 from dataclasses import dataclass, field
@@ -144,6 +145,19 @@ def extract_address(text: str) -> str | None:
     (Birdeye, Solscan, pump.fun, Jupiter, DexScreener…)."""
     found = BASE58_RE.findall(text or "")
     return max(found, key=len) if found else None
+
+
+def bt_reject_reason(bt, s) -> str | None:
+    """Per-coin acceptance on the realistic back-test. Out-of-sample test (2026-11-23, 89 coins,
+    17 cutoffs): '>= 2 trades + positive median' gave more trades (142 vs 123) and a higher
+    total in both halves (A +729 vs +707, B +428 vs +251) than '>= 3 trades + positive sum'."""
+    if bt.trades < s.MIN_BT_TRADES:
+        return f"not enough backtest evidence ({bt.trades} trades)"
+    if bt.total_return_pct < 0:
+        return f"backtest negative ({bt.total_return_pct:+.1f}% over {bt.trades} trades)"
+    if getattr(s, "BT_ACCEPT_MEDIAN", False) and bt.returns and statistics.median(bt.returns) <= 0:
+        return f"backtest median trade not positive ({statistics.median(bt.returns) * 100:+.1f}%)"
+    return None
 
 
 class Scanner:
@@ -293,10 +307,9 @@ class Scanner:
             a.reasons.append("reward/risk too low after costs")
         a.bt = backtest(candles, self.params.zigzag_pct, self.params, pool.liquidity_usd, self.s.MAX_POSITION_USD,
                         tx_fee_usd=fee_usd, **bt_kwargs(self.s))
-        if a.bt.trades < self.s.MIN_BT_TRADES:
-            a.reasons.append(f"not enough backtest evidence ({a.bt.trades} trades)")
-        elif a.bt.total_return_pct < 0:
-            a.reasons.append(f"backtest negative ({a.bt.total_return_pct:+.1f}% over {a.bt.trades} trades)")
+        why = bt_reject_reason(a.bt, self.s)
+        if why:
+            a.reasons.append(why)
         if a.score < self.s.MIN_SCORE and not a.reasons:
             a.reasons.append(f"score {a.score:.0f} < {self.s.MIN_SCORE:.0f}")
         if a.top10 is not None and a.top10 > self.s.MAX_TOP10_HOLDER_PCT:

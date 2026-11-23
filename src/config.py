@@ -53,7 +53,8 @@ class Settings(BaseSettings):
     LIQUIDITY_BAN_HOURS: float = 72.0
     STRIKE_LIMIT: int = 2               # stop-losses on one coin within 7 days…
     STRIKE_BAN_HOURS: float = 72.0      # …ban it this long (its waves are breaking)   # coins whose liquidity collapsed are ignored this long
-    MIN_BT_TRADES: int = 3              # no watchlist entry without back-test evidence
+    MIN_BT_TRADES: int = 2              # no watchlist entry without back-test evidence
+    BT_ACCEPT_MEDIAN: bool = True       # ... and the median back-test trade must be positive
 
     # --- Network costs (Solana) ---
     # Conservative per-transaction cost: base fee (5,000 lamports/signature) + priority fee.

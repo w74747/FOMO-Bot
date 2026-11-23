@@ -49,7 +49,7 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
 - Ask Abdullah before destructive Railway actions or before turning live trading on.
 
 ## Workflow
-- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (85 passing as of
+- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (86 passing as of
   2026-11-24). Check for "FAILED" explicitly before committing.
 - Commit to feature/wave-scanner, push it and push it to main (Railway deploys main).
   After deploy, read Railway logs (startup, "strategy health", "shadow:" lines).
@@ -72,4 +72,6 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
 - Re-test single trailing exit on 1-minute Jupiter prices (jup_prices) after ~1 week.
 - Low-liquidity experiment ENDED 2026-11-21 (3 paper trades, -8.38$: dumps jump through
   the stop). PAPER_ONLY_MIN_LIQUIDITY_USD=0; coins under 50k$ liquidity are not traded.
-- Possible: require per-coin back-test average >= +2%/trade.
+- Per-coin acceptance (2026-11-24): >= 2 back-test trades + positive median (bt_reject_reason);
+  tested out of sample. Discovery also uses GeckoTerminal trending/top-volume pools; 24h
+  volume floor 50k$.

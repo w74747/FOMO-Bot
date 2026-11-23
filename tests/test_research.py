@@ -322,3 +322,16 @@ async def test_gecko_discovery_adds_new_coins_through_jupiter():
     sc = Scanner(G(), None, StateManager(client=fr.FakeRedis(decode_responses=True)), None, settings, jupiter=J())
     out = await sc.gecko_tokens({"HOT"})
     assert J.asked == ["TREND", "VOL"] and [t["mint"] for t in out] == ["TREND", "VOL"]
+
+
+def test_backtest_acceptance_rule():
+    from src.analysis.backtest import BacktestResult
+    from src.analysis.scanner import bt_reject_reason
+
+    def bt(rets):
+        return BacktestResult(trades=len(rets), wins=sum(r > 0 for r in rets), win_rate=0, total_return_pct=sum(rets) * 100,
+                              avg_return_pct=0, worst_trade_pct=0, test_days=30, returns=rets)
+    assert "evidence" in bt_reject_reason(bt([0.2]), settings)                 # 1 trade
+    assert bt_reject_reason(bt([0.1, 0.05]), settings) is None                 # 2 trades, median > 0
+    assert "median" in bt_reject_reason(bt([-0.1, -0.1, 0.9]), settings)       # one big win only
+    assert "negative" in bt_reject_reason(bt([0.1, -0.3]), settings)
