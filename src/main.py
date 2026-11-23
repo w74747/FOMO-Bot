@@ -105,11 +105,15 @@ async def main():
     runner = await start_health_server(monitor)
     await tg.start()
     await state.get_balance(settings.PAPER_START_BALANCE_USD)  # initialise paper balance
-    await tg.send(
-        f"🟢 <b>Wave Bot يعمل</b> — وضع <b>{settings.TRADING_MODE}</b>"
-        + (" (التنفيذ الحقيقي غير مفعّل بعد، يعمل ورقياً)" if settings.TRADING_MODE == "live" else "")
-        + "\nأرسل /help لقائمة الأوامر."
-    )
+    if live:
+        auto = autopilot and await autopilot.is_auto()
+        on = await state.live_enabled()
+        live_txt = ("تلقائي — " if auto else "") + ("يعمل" if on else "متوقف")
+        n_open = len(await state.get_positions("live"))
+        status = f"💰 الحقيقي: <b>{live_txt}</b> · مراكز حقيقية مفتوحة: {n_open}"
+    else:
+        status = "💰 الحقيقي: غير مُعدّ (لا محفظة) — ورقي فقط"
+    await tg.send(f"🔄 <b>أُعيد تشغيل البوت</b> (تحديث أو صيانة)\n{status}\nأرسل /help لقائمة الأوامر.")
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
