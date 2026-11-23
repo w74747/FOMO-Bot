@@ -297,3 +297,28 @@ async def test_known_coins_are_rechecked():
     toks = await sc.discover_tokens()
     assert J.asked == ["OLD1", "OLD2"]                      # one batch, without coins already found
     assert [t["mint"] for t in toks].count("HOT") == 12 and {"OLD1", "OLD2"} <= {t["mint"] for t in toks}
+
+
+async def test_gecko_discovery_adds_new_coins_through_jupiter():
+    from types import SimpleNamespace as NS
+
+    from src.analysis.scanner import Scanner
+
+    class G:
+        async def trending_pools(self, page):
+            return [NS(mint="TREND"), NS(mint="HOT")] if page == 1 else []
+
+        async def top_pools(self, page):
+            return [NS(mint="VOL")] if page == 1 else []
+
+    class J:
+        asked = None
+
+        async def token_info(self, mints):
+            J.asked = mints
+            return [{"mint": m, "symbol": m} for m in mints]
+
+    import fakeredis.aioredis as fr
+    sc = Scanner(G(), None, StateManager(client=fr.FakeRedis(decode_responses=True)), None, settings, jupiter=J())
+    out = await sc.gecko_tokens({"HOT"})
+    assert J.asked == ["TREND", "VOL"] and [t["mint"] for t in out] == ["TREND", "VOL"]

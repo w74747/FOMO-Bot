@@ -172,7 +172,36 @@ class Scanner:
                     tokens += await self.jupiter.top_tokens(cat, interval, 100)
                 except HttpError as e:
                     logger.warning(f"Jupiter {cat}/{interval} failed: {e}")
-        return tokens + await self.known_tokens({t["mint"] for t in tokens})
+        seen = {t["mint"] for t in tokens}
+        extra = await self.gecko_tokens(seen)
+        seen |= {t["mint"] for t in extra}
+        return tokens + extra + await self.known_tokens(seen)
+
+    async def gecko_tokens(self, exclude: set[str]) -> list[dict]:
+        """Second discovery source: GeckoTerminal trending and top-volume Solana pools. Their
+        base mints get fresh Jupiter data (one request per 100) and go through the same filters."""
+        pages = getattr(self.s, "GECKO_DISCOVERY_PAGES", 0)
+        if not (pages and self.gecko and self.jupiter):
+            return []
+        mints: list[str] = []
+        for name in ("trending_pools", "top_pools"):
+            fetch = getattr(self.gecko, name, None)
+            if fetch is None:
+                continue
+            for page in range(1, pages + 1):
+                try:
+                    mints += [p.mint for p in await fetch(page) if p.mint]
+                except Exception as e:
+                    logger.warning(f"gecko discovery {name} p{page}: {e}")
+                    break
+        mints = [m for m in dict.fromkeys(mints) if m not in exclude]
+        try:
+            out = await self.jupiter.token_info(mints) if mints else []
+        except Exception as e:
+            logger.warning(f"gecko discovery token info failed: {e}")
+            return []
+        logger.info(f"gecko discovery: {len(mints)} new mints, {len(out)} with Jupiter data")
+        return [t for t in out if t["mint"] not in exclude]
 
     async def known_tokens(self, exclude: set[str]) -> list[dict]:
         """Coins we already hold candle history for. Many drop out of Jupiter's top lists only

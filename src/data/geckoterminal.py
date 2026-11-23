@@ -123,6 +123,11 @@ class GeckoClient:
         )
         return parse_pools(data)
 
+    async def trending_pools(self, page: int = 1) -> list[PoolInfo]:
+        data = await self._get(f"/networks/{NETWORK}/trending_pools",
+                               {"page": page, "include": "base_token,quote_token"})
+        return parse_pools(data)
+
     async def token_pools(self, mint: str) -> list[PoolInfo]:
         data = await self._get(
             f"/networks/{NETWORK}/tokens/{mint}/pools",

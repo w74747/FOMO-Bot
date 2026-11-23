@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     SCAN_INTERVAL_MIN: int = 240
     SCAN_POOL_PAGES: int = 5
     DISCOVERY_INTERVALS: str = "24h,6h,1h,5m"   # Jupiter top-list windows (no CoinGecko quota)
+    GECKO_DISCOVERY_PAGES: int = 3    # + GeckoTerminal trending & top-volume pools (20 per page each)
     MIN_TOKEN_AGE_DAYS: float = 7.0
     MIN_LIQUIDITY_USD: float = 75_000
     # experiment: coins with liquidity between this and MIN_LIQUIDITY_USD are traded on PAPER
@@ -74,7 +75,7 @@ class Settings(BaseSettings):
     PAPER_ONLY_MIN_LIQUIDITY_USD: float = 0   # experiment ended 2026-11-21 (3 trades, -8.38$, dumps through the stop); 20_000 re-enables
     PAPER_ONLY_MAX_OPEN: int = 4
     PAPER_ONLY_WATCH_SIZE: int = 10
-    MIN_VOLUME_24H_USD: float = 100_000
+    MIN_VOLUME_24H_USD: float = 50_000   # was 100k; liquidity >= 50k$ and all safety filters unchanged
     MAX_FDV_USD: float = 300_000_000
     MAX_TOP10_HOLDER_PCT: float = 0.40   # Jupiter audit.topHoldersPercentage
     MIN_ORGANIC_SCORE: float = 20.0       # Jupiter organic score (filters wash trading)

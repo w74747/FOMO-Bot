@@ -146,9 +146,9 @@ async def main():
 
     async def selection_once():
         await asyncio.sleep(180)
-        if db.ready and not await state.get_meta("sel_v1"):
+        if db.ready and not await state.get_meta("sel_v2"):
             if await tg.selection_job():
-                await state.set_meta("sel_v1", "done")
+                await state.set_meta("sel_v2", "done")
 
     async def exit_once():
         await asyncio.sleep(200)

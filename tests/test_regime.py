@@ -131,5 +131,5 @@ def test_selection_test_is_out_of_sample():
     ds = [(f"pool{i}", [tuple(c) for c in wave_candles(hours=900, period=26 + i)], 300_000) for i in range(6)]
     r = selection_test(ds, asdict(StrategyParams.from_settings(settings)), 20, 0.02,
                        {"bounce_pct": 0.02, "entry_slip": 0.007, "body_only": True})
-    assert r["cutoffs"] > 0 and len(r["rules"]) == 5
+    assert r["cutoffs"] > 0 and len(r["rules"]) == 7
     assert "شرط قبول العملة" in format_selection(r)

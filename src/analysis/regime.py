@@ -340,6 +340,8 @@ def format_exit_models(rows: list[dict]) -> str:
 
 SELECTION_RULES = [
     ("الحالي: 3 صفقات + مجموع موجب", lambda r: len(r) >= 3 and sum(r) > 0),
+    ("صفقتان + مجموع موجب", lambda r: len(r) >= 2 and sum(r) > 0),
+    ("صفقتان + وسيط موجب", lambda r: len(r) >= 2 and statistics.median(r) > 0),
     ("3 صفقات + متوسط ≥ +2%", lambda r: len(r) >= 3 and statistics.mean(r) >= 2),
     ("3 صفقات + وسيط موجب", lambda r: len(r) >= 3 and statistics.median(r) > 0),
     ("3 صفقات + وسيط موجب + متوسط ≥ +2%", lambda r: len(r) >= 3 and statistics.median(r) > 0
