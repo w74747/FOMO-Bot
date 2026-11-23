@@ -19,6 +19,16 @@ def fmt_price(p: float) -> str:
     return f"{p:.4g}" if p >= 0.01 else f"{p:.3e}"
 
 
+def stale_level(item: dict, price: float) -> bool:
+    """The coin is not in a wave at all: the price is already at/below the stop, or more than
+    twice its usual drop below the reference high (an old high from before a collapse, e.g.
+    BLOB -73% vs a usual 23%). Don't arm - silently; the back-test skips these bars too."""
+    if price <= item.get("stop", 0):
+        return True
+    ref, drop = item.get("ref_high"), item.get("median_drop")
+    return bool(ref and drop and price < ref * (1 - 2 * drop))
+
+
 class Monitor:
     def __init__(self, state, jupiter, broker, settings,
                  notify: Callable[[str], Awaitable[None]], live_broker=None):
@@ -149,7 +159,7 @@ class Monitor:
         if not shadow_ok and status == "armed":
             item.update(status="waiting", local_min=None)     # the back-test would not trade it now
             status, changed = "waiting", True
-        if status == "waiting" and price <= item["entry"] and shadow_ok:
+        if status == "waiting" and price <= item["entry"] and shadow_ok and not stale_level(item, price):
             item.update(status="armed", local_min=price)
             changed = True
             await self._notify_item(item, 

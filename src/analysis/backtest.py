@@ -153,6 +153,8 @@ def backtest(
                         same_bar_low = bar.l         # the wick below came after the fill (against us)
             else:
                 was_armed = armed_low is not None
+                if not was_armed and (bar.o <= lv["stop"] or bar.o < ref_high * (1 - 2 * stats.median_drop)):
+                    continue      # already below the stop / far below an old high: not a wave (live: stale_level)
                 fill, same_bar_low = _bounce_entry(fb, lv, bounce_pct, entry_slip, armed_low)
                 if body_only and fill != "cancel" and (was_armed or fill is not None or same_bar_low is not None) \
                         and bar.l <= lv["stop"]:

@@ -380,3 +380,20 @@ def test_prefilter_rejects_low_liquidity_when_experiment_off(monkeypatch):
     kept, rej = prefilter_tokens([{**base, "mint": "BIG", "liquidity": 200_000},
                                   {**base, "mint": "MID", "liquidity": 30_000}], settings)
     assert [t["mint"] for t in kept] == ["BIG"] and not kept[0]["paper_only"]
+
+
+async def test_price_already_below_stop_or_far_below_old_high_is_ignored_silently(env):
+    from src.trading.monitor import stale_level
+    state, db, jup, mon, msgs = env
+    item = watch_item()
+    # already under the stop: no arming, no message, no cooldown
+    await step(mon, jup, item["stop"] * 0.98)
+    await step(mon, jup, item["stop"] * 0.95)
+    it = (await state.get_watchlist())[MINT]
+    assert it["status"] == "waiting" and msgs == [] and await state.get_position(MINT) is None
+    assert not await state.r.exists(f"fb:cooldown:{MINT}")
+    # back above the stop inside the normal buy zone: a real setup again -> armed
+    await step(mon, jup, item["stop"] * 1.01)
+    assert (await state.get_watchlist())[MINT]["status"] == "armed"
+    # BLOB case: 73% below the reference high while the usual drop is 25%
+    assert stale_level({**item, "stop": 0.0}, 0.27) and not stale_level({**item, "stop": 0.0}, 0.78)
