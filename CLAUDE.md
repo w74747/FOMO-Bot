@@ -47,9 +47,12 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
 - Jupiter budget: 55 req/min shared (free plan 60); prices/orders high priority.
 - Never print, log or commit WALLET_PRIVATE_KEY or API keys (http.redact hides keys).
 - Ask Abdullah before destructive Railway actions or before turning live trading on.
+- No rest/ban after losses (REST_AFTER_LOSS=False, 2026-11-24): bans cost ~19% of back-test
+  profit in both halves and made live diverge from the back-test. A broken wave waits for a
+  new high (shadow bt_blocked). Liquidity-collapse bans (72 h) stay.
 
 ## Workflow
-- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (91 passing as of
+- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (93 passing as of
   2026-11-24). Check for "FAILED" explicitly before committing.
 - Commit to feature/wave-scanner, push it and push it to main (Railway deploys main).
   After deploy, read Railway logs (startup, "strategy health", "shadow:" lines).

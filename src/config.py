@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     PAPER_NOTIFY: bool = False              # paper trade messages while live is on (False = silent)
     STOP_COOLDOWN_HOURS: float = 12.0
     LIQUIDITY_BAN_HOURS: float = 72.0
+    REST_AFTER_LOSS: bool = False       # 2026-11-24: rests/bans after losses cost ~19% of back-test profit
+                                        # (A and B) and made live diverge from the back-test; off.
+                                        # Liquidity-collapse bans stay. True restores the old rules.
     STRIKE_LIMIT: int = 2               # stop-losses on one coin within 7 days…
     STRIKE_BAN_HOURS: float = 72.0
     STRIKE_LONG_LIMIT: int = 3          # 3+ stop-losses within 7 days ...

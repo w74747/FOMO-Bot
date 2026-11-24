@@ -110,7 +110,8 @@ async def test_param_overrides_change_entry(env):
     assert abs(item["entry"] - 1.2 * (1 - 0.25 * 1.0)) < 1e-9
 
 
-async def test_stop_loss_and_cooldown(env):
+async def test_stop_loss_and_cooldown(env, monkeypatch):
+    monkeypatch.setattr(settings, "REST_AFTER_LOSS", True)   # old rules
     state, db, jup, mon, msgs = env
     await step(mon, jup, 0.78)
     await step(mon, jup, 0.80)                     # bounce -> buy
@@ -121,7 +122,8 @@ async def test_stop_loss_and_cooldown(env):
     assert await state.in_cooldown(MINT)
 
 
-async def test_broken_wave_before_entry(env):
+async def test_broken_wave_before_entry(env, monkeypatch):
+    monkeypatch.setattr(settings, "REST_AFTER_LOSS", True)   # old rules
     state, db, jup, mon, msgs = env
     await step(mon, jup, 0.78)
     await step(mon, jup, 0.60)                     # through the stop while armed
@@ -184,7 +186,8 @@ async def test_single_liquidity_blip_does_not_exit(env, monkeypatch):
     assert await state.get_position(MINT) is None
 
 
-async def test_stop_loss_removes_from_watchlist(env):
+async def test_stop_loss_removes_from_watchlist(env, monkeypatch):
+    monkeypatch.setattr(settings, "REST_AFTER_LOSS", True)   # old rules
     state, db, jup, mon, msgs = env
     await step(mon, jup, 0.78)
     await step(mon, jup, 0.80)
@@ -212,7 +215,8 @@ async def test_fast_tick_only_prices_hot_coins(env):
     assert await state.get_position(MINT) is not None
 
 
-async def test_second_stop_loss_bans_coin_longer(env):
+async def test_second_stop_loss_bans_coin_longer(env, monkeypatch):
+    monkeypatch.setattr(settings, "REST_AFTER_LOSS", True)   # old rules
     state, db, jup, mon, msgs = env
     for _ in range(2):
         await state.set_watch_item(MINT, watch_item())
@@ -226,7 +230,8 @@ async def test_second_stop_loss_bans_coin_longer(env):
     assert any("مُنعت" in m for m in msgs)
 
 
-async def test_strikes_use_trade_history_when_available(env):
+async def test_strikes_use_trade_history_when_available(env, monkeypatch):
+    monkeypatch.setattr(settings, "REST_AFTER_LOSS", True)   # old rules
     state, db, jup, mon, msgs = env
 
     async def count_stop_losses(mint, days):
@@ -257,7 +262,8 @@ async def test_no_entry_shortly_after_a_liquidity_blip(env):
     assert await state.get_position(MINT) is not None
 
 
-async def test_losing_time_stop_rests_the_coin(env):
+async def test_losing_time_stop_rests_the_coin(env, monkeypatch):
+    monkeypatch.setattr(settings, "REST_AFTER_LOSS", True)   # old rules
     state, db, jup, mon, msgs = env
     await step(mon, jup, 0.78)
     await step(mon, jup, 0.80)                     # buy
@@ -397,3 +403,26 @@ async def test_price_already_below_stop_or_far_below_old_high_is_ignored_silentl
     assert (await state.get_watchlist())[MINT]["status"] == "armed"
     # BLOB case: 73% below the reference high while the usual drop is 25%
     assert stale_level({**item, "stop": 0.0}, 0.27) and not stale_level({**item, "stop": 0.0}, 0.78)
+
+
+
+async def test_no_rest_after_a_stop_loss_by_default(env):
+    state, db, jup, mon, msgs = env
+    assert settings.REST_AFTER_LOSS is False
+    await step(mon, jup, 0.78)
+    await step(mon, jup, 0.80)                       # buy
+    pos = await state.get_position(MINT)
+    await step(mon, jup, pos["stop"] * 0.99)         # stop-loss
+    assert await state.get_position(MINT) is None and db.closed[-1][1] == "وقف خسارة"
+    assert not await state.r.exists(f"fb:cooldown:{MINT}")
+    assert MINT in await state.get_watchlist()       # stays watched: the next wave can be traded
+
+
+async def test_broken_wave_waits_for_new_high_without_time_ban(env):
+    state, db, jup, mon, msgs = env
+    await step(mon, jup, 0.78)                       # armed
+    await step(mon, jup, 0.50)                       # through the stop before any bounce
+    it = (await state.get_watchlist())[MINT]
+    assert it["status"] == "waiting" and it["shadow"]["ok"] is False
+    assert not await state.r.exists(f"fb:cooldown:{MINT}")
+    assert any("بانتظار موجة جديدة" in m for m in msgs)

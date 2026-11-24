@@ -166,15 +166,24 @@ async def main():
             if await tg.missed_job():
                 await state.set_meta("missed_v2", "done")
 
-    async def ban_mihao_once():
-        """Owner's request 2026-11-24: mihao (3 stop-losses in a week, -5.34$ live) out for 7 days."""
+    async def clear_loss_bans_once():
+        """2026-11-24: rests/bans after losses switched off (REST_AFTER_LOSS=False). Lift the ones
+        still running (mihao's week, strike bans, 12 h rests); liquidity-collapse bans stay."""
         await asyncio.sleep(20)
-        if db.ready and not await state.get_meta("ban_mihao_v1"):
-            for mint in await db.mints_by_symbol("mihao"):
-                await state.set_cooldown(mint, settings.STRIKE_LONG_BAN_HOURS)
-                await state.remove_watch_item(mint)
-                logger.info(f"mihao {mint} banned {settings.STRIKE_LONG_BAN_HOURS:.0f}h")
-            await state.set_meta("ban_mihao_v1", "done")
+        if not db.ready or settings.REST_AFTER_LOSS or await state.get_meta("unban_v1"):
+            return
+        lifted = []
+        for row in await db.closed_positions(since_hours=24 * 8):
+            reason = row.get("exit_reason") or ""
+            if reason in ("وقف خسارة", "وقف زمني") and await state.r.exists(f"fb:cooldown:{row['mint']}"):
+                liq_ban = any(r.get("mint") == row["mint"] and r.get("exit_reason") == "سحب سيولة"
+                              for r in await db.closed_positions(since_hours=72))
+                if not liq_ban:
+                    await state.r.delete(f"fb:cooldown:{row['mint']}")
+                    lifted.append(row.get("symbol") or row["mint"][:6])
+        lifted = sorted(set(lifted))
+        logger.info(f"loss bans lifted: {lifted}")
+        await state.set_meta("unban_v1", "done")
 
     async def selection_once():
         await asyncio.sleep(180)
@@ -238,7 +247,7 @@ async def main():
         asyncio.create_task(health_once(), name="health-once"),
         asyncio.create_task(exit_once(), name="exit-once"),
         asyncio.create_task(selection_once(), name="selection-once"),
-        asyncio.create_task(ban_mihao_once(), name="ban-mihao-once"),
+        asyncio.create_task(clear_loss_bans_once(), name="unban-once"),
         asyncio.create_task(diagnose_once(), name="diagnose-once"),
         asyncio.create_task(missed_once(), name="missed-once"),
         asyncio.create_task(cooldown_once(), name="cooldown-once"),

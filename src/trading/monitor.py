@@ -170,9 +170,17 @@ class Monitor:
                 item["local_min"] = price
                 changed = True
             if price <= item["stop"]:
-                await self.state.remove_watch_item(mint)
-                await self.state.set_cooldown(mint, self.s.STOP_COOLDOWN_HOURS)
-                await self._notify_item(item, f"🧊 <b>{sym}</b> كسرت مستوى الوقف قبل الدخول، الموجة غير صالحة. تهدئة {self.s.STOP_COOLDOWN_HOURS:.0f} ساعة.")
+                if getattr(self.s, "REST_AFTER_LOSS", True):
+                    await self.state.remove_watch_item(mint)
+                    await self.state.set_cooldown(mint, self.s.STOP_COOLDOWN_HOURS)
+                    await self._notify_item(item, f"🧊 <b>{sym}</b> كسرت مستوى الوقف قبل الدخول، الموجة غير صالحة. تهدئة {self.s.STOP_COOLDOWN_HOURS:.0f} ساعة.")
+                else:
+                    # same as the back-test: the wave is broken, wait for a new high (the hourly
+                    # shadow verdict blocks it); no time ban
+                    item.update(status="waiting", local_min=None,
+                                shadow={"ok": False, "why": "bt_blocked", "ts": time.time()})
+                    await self.state.set_watch_item(mint, item)
+                    await self._notify_item(item, f"🧊 <b>{sym}</b> كسرت مستوى الوقف قبل الدخول، الموجة غير صالحة. بانتظار موجة جديدة.")
                 return
             if price >= item["local_min"] * (1 + self.s.BOUNCE_CONFIRM_PCT):
                 if price > item["entry"] * 1.05:
@@ -318,6 +326,8 @@ class Monitor:
             await self.state.save_position(mint, pos, book)
 
     async def _exit(self, mint, fraction, price, reason, liq, item, broker=None, cooldown=False):
+        if cooldown and reason != "سحب سيولة" and not getattr(self.s, "REST_AFTER_LOSS", True):
+            cooldown = False      # no rest after losses: the back-test takes the next wave too
         broker = broker or self.broker
         try:
             pos, pnl, closed = await broker.sell(mint, fraction, price, reason, liq)
