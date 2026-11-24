@@ -148,6 +148,22 @@ async def main():
             if await tg.reconcile_job(send=True):
                 await state.set_meta("rec_v1", "done")
 
+    async def diagnose_once():
+        await asyncio.sleep(240)
+        if db.ready and not await state.get_meta("diag_v1"):
+            if await tg.diagnose_job():
+                await state.set_meta("diag_v1", "done")
+
+    async def ban_mihao_once():
+        """Owner's request 2026-11-24: mihao (3 stop-losses in a week, -5.34$ live) out for 7 days."""
+        await asyncio.sleep(20)
+        if db.ready and not await state.get_meta("ban_mihao_v1"):
+            for mint in await db.mints_by_symbol("mihao"):
+                await state.set_cooldown(mint, settings.STRIKE_LONG_BAN_HOURS)
+                await state.remove_watch_item(mint)
+                logger.info(f"mihao {mint} banned {settings.STRIKE_LONG_BAN_HOURS:.0f}h")
+            await state.set_meta("ban_mihao_v1", "done")
+
     async def selection_once():
         await asyncio.sleep(180)
         if db.ready and not await state.get_meta("sel_v2"):
@@ -210,6 +226,8 @@ async def main():
         asyncio.create_task(health_once(), name="health-once"),
         asyncio.create_task(exit_once(), name="exit-once"),
         asyncio.create_task(selection_once(), name="selection-once"),
+        asyncio.create_task(ban_mihao_once(), name="ban-mihao-once"),
+        asyncio.create_task(diagnose_once(), name="diagnose-once"),
         asyncio.create_task(reconcile_once(), name="reconcile-once"),
         asyncio.create_task(autopilot_loop(), name="autopilot"),
         asyncio.create_task(price_recorder(), name="price-recorder"),

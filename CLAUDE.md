@@ -49,7 +49,7 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
 - Ask Abdullah before destructive Railway actions or before turning live trading on.
 
 ## Workflow
-- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (86 passing as of
+- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (88 passing as of
   2026-11-24). Check for "FAILED" explicitly before committing.
 - Commit to feature/wave-scanner, push it and push it to main (Railway deploys main).
   After deploy, read Railway logs (startup, "strategy health", "shadow:" lines).

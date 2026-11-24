@@ -346,6 +346,8 @@ class Monitor:
                     strikes = counted if counted else await self.state.add_strike(mint)
                     if strikes >= self.s.STRIKE_LIMIT:
                         hours = self.s.STRIKE_BAN_HOURS
+                        if strikes >= getattr(self.s, "STRIKE_LONG_LIMIT", 99):
+                            hours = self.s.STRIKE_LONG_BAN_HOURS
                         msg += (f"\n🚫 وقف الخسارة رقم {strikes} على هذه العملة خلال 7 أيام: "
                                 f"موجاتها تنكسر، مُنعت {hours:.0f} ساعة.")
                 await self.state.set_cooldown(mint, max(hours, await self._remaining_cooldown_h(mint)))

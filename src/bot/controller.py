@@ -465,38 +465,85 @@ class TelegramController:
         await self._reply(update, "🔍 بدأت مطابقة الصفقات مع الاختبار… (دقيقة تقريباً)")
         self._spawn(self.reconcile_job(send=True))
 
+    async def _actual_paper_trades(self) -> list[dict]:
+        """Closed paper trades (every signal) with their real entry/exit prices."""
+        closes = [r for r in strategy_closes(await self.db.closed_positions())
+                  if (r.get("mode") or "paper") == "paper"]
+        trades = await self.db.all_trades("paper")
+        actual = []
+        for c in closes:
+            o = c["opened_at"].timestamp() if c.get("opened_at") else None
+            e = c["closed_at"].timestamp() if c.get("closed_at") else None
+            if not o or not e:
+                continue
+            mine = [t for t in trades if t["mint"] == c["mint"]]
+            buy = min((t for t in mine if t["side"] == "BUY"),
+                      key=lambda t: abs(t["created_at"].timestamp() - o), default=None)
+            sells = [t for t in mine if t["side"] == "SELL" and o - 60 <= t["created_at"].timestamp() <= e + 60]
+            actual.append({"mint": c["mint"], "symbol": c.get("symbol"), "opened_at": o, "closed_at": e,
+                           "ret": c.get("return_pct") or 0.0, "reason": c.get("exit_reason"),
+                           "mode": c.get("tier") or "paper",
+                           "entry_price": buy["price"] if buy and abs(buy["created_at"].timestamp() - o) < 300 else None,
+                           "exit_price": sells[-1]["price"] if sells else None})
+        return actual
+
+    async def _datasets_by_mint(self, mints: set[str] | None = None) -> dict:
+        """{mint: ([candle tuples], liquidity)} for the most liquid stored pool of each coin."""
+        best = {}
+        for p in await self.db.tracked_pools(min_candles=100):
+            if mints is not None and p["mint"] not in mints:
+                continue
+            cur = best.get(p["mint"])
+            if not cur or (p.get("liquidity_usd") or 0) > (cur.get("liquidity_usd") or 0):
+                best[p["mint"]] = p
+        out = {}
+        for mint, p in best.items():
+            candles = await self.db.load_candles(p["pool"])
+            out[mint] = ([tuple(c) for c in candles], float(p["liquidity_usd"] or 100_000))
+        return out
+
+    async def diagnose_job(self, send: bool = True) -> str | None:
+        from datetime import datetime
+
+        from src.analysis.diagnose import diagnose, format_diagnose
+        try:
+            rows = strategy_closes(await self.db.closed_positions())
+            closes = [{"opened_at": r["opened_at"].timestamp() if r.get("opened_at") else 0,
+                       "ret": r.get("return_pct") or 0.0, "pnl": r.get("pnl_usd") or 0.0,
+                       "reason": r.get("exit_reason"), "mode": r.get("mode") or "paper", "tier": r.get("tier"),
+                       "entry_gap": r.get("entry_gap_pct"), "exit_gap": r.get("exit_gap_pct")} for r in rows]
+            actual = await self._actual_paper_trades()
+            datasets = await self._datasets_by_mint(None)
+            jup = {}
+            for mint in await self.db.jup_mints():
+                if mint in datasets:
+                    jup[mint] = await self.db.jup_hourly(mint)
+            eras = [("قبل الاختبار الواقعي", 0.0),
+                    ("الاختبار الواقعي", datetime.fromisoformat("2026-11-17T21:50:00+00:00").timestamp()),
+                    ("اختبار الظل", datetime.fromisoformat("2026-11-19T06:15:00+00:00").timestamp())]
+            params = await load_params(self.state, self.s)
+            fee_usd = await self.state.tx_fee_usd(self.s)
+            with ProcessPoolExecutor(max_workers=1) as ex:
+                r = await asyncio.get_running_loop().run_in_executor(
+                    ex, diagnose, closes, actual, datasets, jup, asdict(params), self.s.MAX_POSITION_USD,
+                    fee_usd, bt_kwargs(self.s), eras)
+            text = format_diagnose(r)
+            logger.info("DIAGNOSE\n" + text)
+            if r.get("reconcile"):
+                for x in r["reconcile"]["rows"]:
+                    logger.info(f"DIAG ROW { {k: v for k, v in x.items() if k != 'mint'} }")
+            if send:
+                await self.send(text)
+            return text
+        except Exception:
+            logger.exception("diagnose failed")
+            return None
+
     async def reconcile_job(self, send: bool = True) -> str | None:
         from src.analysis.reconcile import format_reconcile, reconcile
         try:
-            closes = [r for r in strategy_closes(await self.db.closed_positions())
-                      if (r.get("mode") or "paper") == "paper"]
-            trades = await self.db.all_trades("paper")
-            actual = []
-            for c in closes:
-                o = c["opened_at"].timestamp() if c.get("opened_at") else None
-                e = c["closed_at"].timestamp() if c.get("closed_at") else None
-                if not o or not e:
-                    continue
-                mine = [t for t in trades if t["mint"] == c["mint"]]
-                buy = min((t for t in mine if t["side"] == "BUY"),
-                          key=lambda t: abs(t["created_at"].timestamp() - o), default=None)
-                sells = [t for t in mine if t["side"] == "SELL" and o - 60 <= t["created_at"].timestamp() <= e + 60]
-                actual.append({"mint": c["mint"], "symbol": c.get("symbol"), "opened_at": o, "closed_at": e,
-                               "ret": c.get("return_pct") or 0.0, "reason": c.get("exit_reason"),
-                               "mode": c.get("tier") or "paper",
-                               "entry_price": buy["price"] if buy and abs(buy["created_at"].timestamp() - o) < 300 else None,
-                               "exit_price": sells[-1]["price"] if sells else None})
-            pools = await self.db.tracked_pools(min_candles=100)
-            best = {}
-            for p in pools:
-                if p["mint"] in {a["mint"] for a in actual}:
-                    cur = best.get(p["mint"])
-                    if not cur or (p.get("liquidity_usd") or 0) > (cur.get("liquidity_usd") or 0):
-                        best[p["mint"]] = p
-            datasets = {}
-            for mint, p in best.items():
-                candles = await self.db.load_candles(p["pool"])
-                datasets[mint] = ([tuple(c) for c in candles], float(p["liquidity_usd"] or 100_000))
+            actual = await self._actual_paper_trades()
+            datasets = await self._datasets_by_mint({a["mint"] for a in actual})
             params = await load_params(self.state, self.s)
             fee_usd = await self.state.tx_fee_usd(self.s)
             loop = asyncio.get_running_loop()

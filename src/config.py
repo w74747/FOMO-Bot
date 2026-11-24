@@ -52,7 +52,9 @@ class Settings(BaseSettings):
     STOP_COOLDOWN_HOURS: float = 12.0
     LIQUIDITY_BAN_HOURS: float = 72.0
     STRIKE_LIMIT: int = 2               # stop-losses on one coin within 7 days…
-    STRIKE_BAN_HOURS: float = 72.0      # …ban it this long (its waves are breaking)   # coins whose liquidity collapsed are ignored this long
+    STRIKE_BAN_HOURS: float = 72.0
+    STRIKE_LONG_LIMIT: int = 3          # 3+ stop-losses within 7 days ...
+    STRIKE_LONG_BAN_HOURS: float = 168.0  # ... a whole week (mihao: 3 stops, -5.34$ live)      # …ban it this long (its waves are breaking)   # coins whose liquidity collapsed are ignored this long
     MIN_BT_TRADES: int = 2              # no watchlist entry without back-test evidence
     BT_ACCEPT_MEDIAN: bool = True       # ... and the median back-test trade must be positive
 

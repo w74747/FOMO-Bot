@@ -214,7 +214,14 @@ class Database:
             return None
         return await self.pool.fetchval(
             "SELECT COUNT(*) FROM closed_positions WHERE mint=$1 AND exit_reason='وقف خسارة' "
+            "AND COALESCE(mode, 'paper') = 'paper' "       # one row per signal (live mirrors paper)
             "AND closed_at >= NOW() - make_interval(days => $2)", mint, int(days))
+
+    async def mints_by_symbol(self, symbol: str) -> list[str]:
+        if not self.pool:
+            return []
+        rows = await self.pool.fetch("SELECT DISTINCT mint FROM closed_positions WHERE symbol=$1", symbol)
+        return [r["mint"] for r in rows]
 
     async def save_jup_prices(self, ts: int, prices: dict[str, float]):
         if not self.pool or not prices:
@@ -225,6 +232,13 @@ class Database:
                 [(m, ts, p) for m, p in prices.items()])
         except Exception as e:
             logger.error(f"save_jup_prices failed: {e}")
+
+    async def jup_mints(self, min_rows: int = 1440) -> list[str]:
+        """Mints with at least `min_rows` 1-minute Jupiter samples (1440 = one day)."""
+        if not self.pool:
+            return []
+        rows = await self.pool.fetch("SELECT mint FROM jup_prices GROUP BY mint HAVING COUNT(*) >= $1", min_rows)
+        return [r["mint"] for r in rows]
 
     async def jup_hourly(self, mint: str) -> list[tuple]:
         """Hourly OHLC built from our 1-minute Jupiter samples: (ts, o, h, l, c, samples)."""
