@@ -59,19 +59,28 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
 - Telegram "Conflict: terminated by other getUpdates" right after a deploy is the old
   instance shutting down — harmless.
 
-## Current state (2026-11-22)
-- Autopilot (/live auto) switched LIVE ON on 2026-11-21 21:45 UTC: first 10 paper trades
-  under the shadow gate: 5 wins, +11.04 $, average +5.5%; health +2.69% at the time.
-  Health is falling (+1.69% on 2026-11-22); live stops automatically at <= +0.5%.
+## Current state (2026-11-24)
+- Live trading OFF: the autopilot (/live auto, still enabled) switched it off on 2026-11-24
+  (last 8 paper trades averaged -2.18%). It restarts by itself only when health > +2%, the
+  last 10 paper trades average > 0% and 12 h passed. Kill switch: drawdown since /live auto is
+  14.06 $ of 15 $ -> one more live loss stops live for good until Abdullah re-enables it.
+- Real results: 19 live trades, about -19.4 $ total (6 under the autopilot: -11.42 $).
+- Diagnosis 2026-11-24: data (pool candles vs Jupiter 1-min prices) and execution speed are
+  fine; the bot was not taking the back-test's trades (16 missed profitable ones), mainly
+  because of rests/bans after losses -> REST_AFTER_LOSS=False. Next check: 2026-11-27 (does
+  the bot now take the same trades as the back-test?).
+- Hourly monitor: scheduled task "FOMO-Bot: مراقبة كل ساعة" (fresh session each hour) reads
+  this file; it may fix bugs and redeploy, never turns live on or raises risk.
 - Railway overrides: MIN_LIQUIDITY_USD=50000, MAX_OPEN_POSITIONS=12 (paper),
   MAX_ANALYZE_PER_SCAN=80, LIVE_POSITION_USD=20, LIVE_MAX_OPEN_POSITIONS=6.
 - Param overrides (Redis): zigzag_pct=0.14, entry_drop_factor=1.0, tp1_factor=0.7,
   tp2_factor=1.1, stop_drop_factor=0.7, trail_factor=0.4, min_reward_risk=1.3,
   min_stop_pct=0.07, min_trail_pct=0.05.
-- Real results: 13 trades, 5 wins, about -8 $.
+- Wallet ~4.5 SOL (Abdullah added 2.569 SOL on 2026-11-24).
 
 ## Open questions / next
-- Does the shadow gate make paper trades profitable? (first 10 trades)
+- Shadow gate: first 10 paper trades +5.5%/trade, next ones negative; reconcile again after
+  the no-rest change.
 - Re-test single trailing exit on 1-minute Jupiter prices (jup_prices) after ~1 week.
 - Low-liquidity experiment ENDED 2026-11-21 (3 paper trades, -8.38$: dumps jump through
   the stop). PAPER_ONLY_MIN_LIQUIDITY_USD=0; coins under 50k$ liquidity are not traded.
