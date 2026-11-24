@@ -156,9 +156,9 @@ async def main():
 
     async def missed_once():
         await asyncio.sleep(150)
-        if db.ready and not await state.get_meta("missed_v1"):
+        if db.ready and not await state.get_meta("missed_v2"):
             if await tg.missed_job():
-                await state.set_meta("missed_v1", "done")
+                await state.set_meta("missed_v2", "done")
 
     async def ban_mihao_once():
         """Owner's request 2026-11-24: mihao (3 stop-losses in a week, -5.34$ live) out for 7 days."""

@@ -146,6 +146,27 @@ def recent_bt_reasons(datasets: dict, p: StrategyParams, position_usd: float, fe
     return {"reasons": dict(c), "all": _st(rets)}
 
 
+def analysis_verdict(a: dict, liq: float, min_bt_trades: int = 3, max_cycle_hours: float = 72) -> str:
+    """Why the scan did (or did not) put the coin on the watchlist, rebuilt from the stored
+    analysis (wave stats + back-test summary). 'accepted' = no rejection reason found."""
+    from src.analysis.waves import WaveStats, score
+    st = a.get("stats") if isinstance(a.get("stats"), dict) else None
+    if st:
+        try:
+            ws = WaveStats(**{k: v for k, v in st.items() if k in WaveStats.__dataclass_fields__})
+            _, reasons = score(ws, liq, max_cycle_hours)
+            if reasons:
+                return reasons[0].split(" (")[0]
+        except Exception:
+            pass
+    bt = a.get("backtest") or {}
+    if bt.get("trades", 0) < min_bt_trades:
+        return "not enough backtest evidence"
+    if (bt.get("total_return_pct") or 0) < 0:
+        return "backtest negative"
+    return "accepted"
+
+
 def missed_opportunities(datasets: dict, symbols: dict, analyses: list[dict], our_trades: list[dict],
                          p: StrategyParams, position_usd: float, fee_usd: float, bt_kw: dict,
                          since: float, min_score: float) -> dict:
@@ -163,6 +184,7 @@ def missed_opportunities(datasets: dict, symbols: dict, analyses: list[dict], ou
         ours[t["mint"]].append(t["opened_at"])
     groups = defaultdict(list)
     examples = defaultdict(list)
+    verdicts = defaultdict(list)
     for mint, (raw, liq) in datasets.items():
         det: list = []
         backtest(clean_candles([Candle(*x) for x in raw]), p.zigzag_pct, p, liq, position_usd,
@@ -180,12 +202,15 @@ def missed_opportunities(datasets: dict, symbols: dict, analyses: list[dict], ou
                     g = "not_scanned"
                 elif (prior[-1].get("score") or 0) >= min_score:
                     g = "analysed_ok"
+                    verdicts[analysis_verdict(prior[-1], liq)].append(d["ret"] * 100)
                 else:
                     g = "analysed_no"
             r = d["ret"] * 100
             groups[g].append(r)
             examples[g].append((symbols.get(mint) or mint[:6], round(r, 1), round(liq / 1000)))
-    return {g: {**_st(v), "examples": sorted(examples[g], key=lambda x: -x[1])[:8]} for g, v in groups.items()}
+    out = {g: {**_st(v), "examples": sorted(examples[g], key=lambda x: -x[1])[:8]} for g, v in groups.items()}
+    out["_verdicts"] = {k: _st(v) for k, v in verdicts.items()}
+    return out
 
 
 def diagnose(closes: list[dict], actual: list[dict], datasets: dict, jup: dict, params: dict,
@@ -224,11 +249,15 @@ MISSED_AR = {"traded": "تداولناها فعلاً (ورقي)", "analysed_ok"
 def format_missed(m: dict) -> str:
     L = ["🔎 <b>أين كانت أرباح الاختبار؟</b> (كل صفقات الاختبار منذ اختبار الظل، حسب ما فعله البوت بالعملة)"]
     for g in ("traded", "analysed_ok", "analysed_no", "not_scanned"):
-        x = m.get(g)
+        x = m.get(g)  # noqa
         if not x or not x.get("n"):
             continue
         L.append(_row(f"• {MISSED_AR[g]}", x))
         L.append("  أمثلة: " + " · ".join(f"{s} {r:+.0f}% (سيولة {l}k$)" for s, r, l in x["examples"]))
+        if g == "analysed_ok" and m.get("_verdicts"):
+            L.append("  لماذا لم نتداولها (حكم المسح وقتها):")
+            for k, v in sorted(m["_verdicts"].items(), key=lambda kv: -kv[1]["n"]):
+                L.append(f"   - {k}: {v['n']} صفقة · متوسط {v['avg']:+.1f}%")
     return "\n".join(L)
 
 

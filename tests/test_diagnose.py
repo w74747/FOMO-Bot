@@ -45,8 +45,18 @@ def test_missed_opportunities_groups():
     since = raw[300].ts
     r = missed_opportunities({"M": ([tuple(c) for c in raw], 300_000)}, {"M": "MM"}, [], [], p, 20, 0.02, KW,
                              since, settings.MIN_SCORE)
-    assert set(r) <= {"not_scanned"} and r["not_scanned"]["n"] > 0
+    assert set(r) <= {"not_scanned", "_verdicts"} and r["not_scanned"]["n"] > 0
     an = [{"mint": "M", "score": 90, "scanned_at": datetime.fromtimestamp(c.ts - 3600, timezone.utc)} for c in raw[300:]]
     r2 = missed_opportunities({"M": ([tuple(c) for c in raw], 300_000)}, {"M": "MM"}, an, [], p, 20, 0.02, KW,
                               since, settings.MIN_SCORE)
     assert "analysed_ok" in r2 and "أين كانت أرباح الاختبار" in format_missed(r2)
+
+
+def test_analysis_verdict():
+    from src.analysis.diagnose import analysis_verdict
+    from src.analysis.waves import wave_stats, clean_candles
+    st = wave_stats(clean_candles(wave_candles(hours=700, period=30)), 0.14).to_dict()
+    assert analysis_verdict({"stats": st, "backtest": {"trades": 5, "total_return_pct": 20}}, 300_000) == "accepted"
+    assert analysis_verdict({"stats": st, "backtest": {"trades": 1, "total_return_pct": 20}}, 300_000) == "not enough backtest evidence"
+    assert analysis_verdict({"stats": {**st, "avg_cycle_hours": 200}, "backtest": {"trades": 5, "total_return_pct": 5}},
+                            300_000) == "waves too slow"

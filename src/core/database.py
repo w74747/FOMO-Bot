@@ -237,12 +237,12 @@ class Database:
         if not self.pool:
             return []
         rows = await self.pool.fetch(
-            "SELECT mint, symbol, score, backtest, plan, scanned_at FROM token_analyses WHERE scanned_at >= $1 "
+            "SELECT mint, symbol, score, stats, backtest, plan, scanned_at FROM token_analyses WHERE scanned_at >= $1 "
             "ORDER BY scanned_at", since)
         out = []
         for r in rows:
             d = dict(r)
-            for k in ("backtest", "plan"):
+            for k in ("stats", "backtest", "plan"):
                 if isinstance(d.get(k), str):
                     try:
                         d[k] = json.loads(d[k])
