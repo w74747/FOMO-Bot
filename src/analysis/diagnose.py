@@ -146,6 +146,48 @@ def recent_bt_reasons(datasets: dict, p: StrategyParams, position_usd: float, fe
     return {"reasons": dict(c), "all": _st(rets)}
 
 
+def missed_opportunities(datasets: dict, symbols: dict, analyses: list[dict], our_trades: list[dict],
+                         p: StrategyParams, position_usd: float, fee_usd: float, bt_kw: dict,
+                         since: float, min_score: float) -> dict:
+    """Where did the back-test's profitable trades come from? Every back-test trade entered since
+    `since`, grouped by what the live bot did with that coin around that hour:
+      traded      - we have a paper trade on the coin within +-3 h
+      analysed_ok - analysed in a scan within 8 h before, score >= MIN_SCORE (watchlist-grade)
+      analysed_no - analysed, but below the score bar
+      not_scanned - not analysed in the 8 h before (filtered out before analysis / not discovered)"""
+    by_mint = defaultdict(list)
+    for a in analyses:
+        by_mint[a["mint"]].append(a)
+    ours = defaultdict(list)
+    for t in our_trades:
+        ours[t["mint"]].append(t["opened_at"])
+    groups = defaultdict(list)
+    examples = defaultdict(list)
+    for mint, (raw, liq) in datasets.items():
+        det: list = []
+        backtest(clean_candles([Candle(*x) for x in raw]), p.zigzag_pct, p, liq, position_usd,
+                 tx_fee_usd=fee_usd, trade_detail=det, **(bt_kw or {}))
+        for d in det:
+            ts = d["entry_ts"]
+            if ts < since:
+                continue
+            if any(abs(o - ts) <= 3 * H for o in ours.get(mint, [])):
+                g = "traded"
+            else:
+                prior = [a for a in by_mint.get(mint, [])
+                         if 0 <= ts - a["scanned_at"].timestamp() <= 8 * H]
+                if not prior:
+                    g = "not_scanned"
+                elif (prior[-1].get("score") or 0) >= min_score:
+                    g = "analysed_ok"
+                else:
+                    g = "analysed_no"
+            r = d["ret"] * 100
+            groups[g].append(r)
+            examples[g].append((symbols.get(mint) or mint[:6], round(r, 1), round(liq / 1000)))
+    return {g: {**_st(v), "examples": sorted(examples[g], key=lambda x: -x[1])[:8]} for g, v in groups.items()}
+
+
 def diagnose(closes: list[dict], actual: list[dict], datasets: dict, jup: dict, params: dict,
              position_usd: float, fee_usd: float, bt_kw: dict, eras: list[tuple[str, float]]) -> dict:
     known = {f.name for f in fields(StrategyParams)}
@@ -173,6 +215,21 @@ def _row(label, st, usd=None):
         return f"{label}: —"
     t = f"{label}: {st['n']} صفقة · فوز {st['win']:.0f}% · متوسط {st['avg']:+.1f}% · وسيط {st['median']:+.1f}%"
     return t + (f" · صافي {usd:+.2f}$" if usd is not None else "")
+
+
+MISSED_AR = {"traded": "تداولناها فعلاً (ورقي)", "analysed_ok": "حُللت وتقييمها كافٍ لكن لم نتداولها",
+             "analysed_no": "حُللت لكن تقييمها تحت الحد", "not_scanned": "لم تُحلل (استُبعدت قبل التحليل أو لم تُكتشف)"}
+
+
+def format_missed(m: dict) -> str:
+    L = ["🔎 <b>أين كانت أرباح الاختبار؟</b> (كل صفقات الاختبار منذ اختبار الظل، حسب ما فعله البوت بالعملة)"]
+    for g in ("traded", "analysed_ok", "analysed_no", "not_scanned"):
+        x = m.get(g)
+        if not x or not x.get("n"):
+            continue
+        L.append(_row(f"• {MISSED_AR[g]}", x))
+        L.append("  أمثلة: " + " · ".join(f"{s} {r:+.0f}% (سيولة {l}k$)" for s, r, l in x["examples"]))
+    return "\n".join(L)
 
 
 def format_diagnose(r: dict) -> str:

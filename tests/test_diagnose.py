@@ -34,3 +34,19 @@ def test_diagnose_end_to_end():
     assert r["reconcile"]["n"] == 1
     txt = format_diagnose(r)
     assert "تشخيص شامل" in txt and "Jupiter" in txt
+
+
+def test_missed_opportunities_groups():
+    from datetime import datetime, timezone
+
+    from src.analysis.diagnose import format_missed, missed_opportunities
+    p = StrategyParams.from_settings(settings)
+    raw = wave_candles(hours=800, period=30)
+    since = raw[300].ts
+    r = missed_opportunities({"M": ([tuple(c) for c in raw], 300_000)}, {"M": "MM"}, [], [], p, 20, 0.02, KW,
+                             since, settings.MIN_SCORE)
+    assert set(r) <= {"not_scanned"} and r["not_scanned"]["n"] > 0
+    an = [{"mint": "M", "score": 90, "scanned_at": datetime.fromtimestamp(c.ts - 3600, timezone.utc)} for c in raw[300:]]
+    r2 = missed_opportunities({"M": ([tuple(c) for c in raw], 300_000)}, {"M": "MM"}, an, [], p, 20, 0.02, KW,
+                              since, settings.MIN_SCORE)
+    assert "analysed_ok" in r2 and "أين كانت أرباح الاختبار" in format_missed(r2)

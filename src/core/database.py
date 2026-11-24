@@ -233,6 +233,24 @@ class Database:
         except Exception as e:
             logger.error(f"save_jup_prices failed: {e}")
 
+    async def analyses_since(self, since) -> list[dict]:
+        if not self.pool:
+            return []
+        rows = await self.pool.fetch(
+            "SELECT mint, symbol, score, backtest, plan, scanned_at FROM token_analyses WHERE scanned_at >= $1 "
+            "ORDER BY scanned_at", since)
+        out = []
+        for r in rows:
+            d = dict(r)
+            for k in ("backtest", "plan"):
+                if isinstance(d.get(k), str):
+                    try:
+                        d[k] = json.loads(d[k])
+                    except ValueError:
+                        d[k] = None
+            out.append(d)
+        return out
+
     async def jup_mints(self, min_rows: int = 1440) -> list[str]:
         """Mints with at least `min_rows` 1-minute Jupiter samples (1440 = one day)."""
         if not self.pool:

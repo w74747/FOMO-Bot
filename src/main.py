@@ -154,6 +154,12 @@ async def main():
             if await tg.diagnose_job():
                 await state.set_meta("diag_v1", "done")
 
+    async def missed_once():
+        await asyncio.sleep(150)
+        if db.ready and not await state.get_meta("missed_v1"):
+            if await tg.missed_job():
+                await state.set_meta("missed_v1", "done")
+
     async def ban_mihao_once():
         """Owner's request 2026-11-24: mihao (3 stop-losses in a week, -5.34$ live) out for 7 days."""
         await asyncio.sleep(20)
@@ -228,6 +234,7 @@ async def main():
         asyncio.create_task(selection_once(), name="selection-once"),
         asyncio.create_task(ban_mihao_once(), name="ban-mihao-once"),
         asyncio.create_task(diagnose_once(), name="diagnose-once"),
+        asyncio.create_task(missed_once(), name="missed-once"),
         asyncio.create_task(reconcile_once(), name="reconcile-once"),
         asyncio.create_task(autopilot_loop(), name="autopilot"),
         asyncio.create_task(price_recorder(), name="price-recorder"),

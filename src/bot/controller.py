@@ -539,6 +539,31 @@ class TelegramController:
             logger.exception("diagnose failed")
             return None
 
+    async def missed_job(self, send: bool = True) -> str | None:
+        from datetime import datetime, timezone
+
+        from src.analysis.diagnose import format_missed, missed_opportunities
+        try:
+            since_dt = datetime(2026, 11, 19, 6, 15, tzinfo=timezone.utc)
+            datasets = await self._datasets_by_mint(None)
+            symbols = {p["mint"]: p.get("symbol") for p in await self.db.tracked_pools(min_candles=100)}
+            analyses = await self.db.analyses_since(since_dt.replace(day=18))
+            ours = await self._actual_paper_trades()
+            params = await load_params(self.state, self.s)
+            fee_usd = await self.state.tx_fee_usd(self.s)
+            with ProcessPoolExecutor(max_workers=1) as ex:
+                m = await asyncio.get_running_loop().run_in_executor(
+                    ex, missed_opportunities, datasets, symbols, analyses, ours, params,
+                    self.s.MAX_POSITION_USD, fee_usd, bt_kwargs(self.s), since_dt.timestamp(), self.s.MIN_SCORE)
+            text = format_missed(m)
+            logger.info("MISSED\n" + text)
+            if send:
+                await self.send(text)
+            return text
+        except Exception:
+            logger.exception("missed job failed")
+            return None
+
     async def reconcile_job(self, send: bool = True) -> str | None:
         from src.analysis.reconcile import format_reconcile, reconcile
         try:
