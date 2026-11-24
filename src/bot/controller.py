@@ -539,6 +539,27 @@ class TelegramController:
             logger.exception("diagnose failed")
             return None
 
+    async def cooldown_job(self) -> str | None:
+        from src.analysis.regime import cooldown_models, format_cooldown_models
+        try:
+            pools = await self.db.tracked_pools(min_candles=300)
+            datasets = []
+            for p in pools:
+                candles = await self.db.load_candles(p["pool"])
+                datasets.append((p["pool"], [tuple(c) for c in candles], float(p["liquidity_usd"] or 100_000)))
+            params = await load_params(self.state, self.s)
+            fee_usd = await self.state.tx_fee_usd(self.s)
+            with ProcessPoolExecutor(max_workers=1) as ex:
+                rows = await asyncio.get_running_loop().run_in_executor(
+                    ex, cooldown_models, datasets, asdict(params), self.s.MAX_POSITION_USD, fee_usd, bt_kwargs(self.s))
+            text = format_cooldown_models(rows)
+            logger.info("COOLDOWN MODELS\n" + text)
+            await self.send(text)
+            return text
+        except Exception:
+            logger.exception("cooldown models failed")
+            return None
+
     async def missed_job(self, send: bool = True) -> str | None:
         from datetime import datetime, timezone
 

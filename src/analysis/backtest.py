@@ -79,6 +79,7 @@ def backtest(
     trade_detail: list | None = None,
     level_log: dict | None = None,
     trail_only: float | None = None,
+    cooldowns: dict | None = None,
 ) -> BacktestResult:
     """`bounce_pct` (optional) models the live entry: after the price touches the entry level the
     bot waits for a bounce of `bounce_pct` off the lowest price since, then buys `entry_slip`
@@ -104,6 +105,22 @@ def backtest(
     ref_high = None
     tradeable = False
     armed_low = None   # bounce model: lowest price since the entry zone was touched
+    cool_until = 0     # live-style rest after a losing exit (cooldowns option)
+    stop_times: list[float] = []
+
+    def rest_after(ts: float, ret: float, reason: str) -> float:
+        """Live rules: a stop-loss or losing time stop rests the coin; repeated stop-losses ban it."""
+        if not cooldowns or ret >= 0 or not reason.startswith(("stop", "time")):
+            return 0
+        hours = cooldowns.get("loss_h", 12)
+        if reason.startswith("stop"):
+            stop_times.append(ts)
+            recent = sum(1 for t in stop_times if ts - t <= 7 * 86400)
+            if recent >= cooldowns.get("long_limit", 99):
+                hours = cooldowns.get("long_h", hours)
+            elif recent >= cooldowns.get("strike_limit", 99):
+                hours = cooldowns.get("strike_h", hours)
+        return ts + hours * 3600
 
     for i in range(warmup, len(candles)):
         bar = candles[i]
@@ -126,6 +143,9 @@ def backtest(
             continue
 
         if pos is None:
+            if bar.ts < cool_until:
+                armed_low = None
+                continue
             if ref_high is None:
                 ref_high = stats.last_high
             if bar.h > ref_high:
@@ -195,6 +215,7 @@ def backtest(
                     trade_detail.append({"entry_ts": bar.ts, "exit_ts": bar.ts, "fill": fill, "ret": returns[-1],
                                          "reason": "stop (same hour)", "lv_entry": lv["entry"], "ref_high": ref_high,
                                          "stop": pos["stop"], "tp1": pos["tp1"]})
+                cool_until = max(cool_until, rest_after(bar.ts, returns[-1], "stop"))
                 pos, ref_high, blocked_until_new_high = None, bar.h, False
             continue
 
@@ -242,6 +263,7 @@ def backtest(
                                      "ret": pos["realized"], "reason": reason + ("+tp1" if pos["half"] and reason != "trailing" else ""),
                                      "lv_entry": pos["lv_entry"], "ref_high": pos["ref_high"],
                                      "stop": pos["stop"], "tp1": pos["tp1"]})
+            cool_until = max(cool_until, rest_after(bar.ts, pos["realized"], reason))
             pos = None
             ref_high = bar.h
             blocked_until_new_high = False

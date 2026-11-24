@@ -406,3 +406,41 @@ def format_selection(r: dict) -> str:
         L.append(_row("• الصفقات التالية", a) + f" · وسيط {x['median']:+.1f}%")
         L.append(f"• A {x['a'].get('avg', 0):+.2f}% ({x['a']['n']}) · B {x['b'].get('avg', 0):+.2f}% ({x['b']['n']})")
     return "\n".join(L)
+
+
+
+COOLDOWN_MODELS = [
+    ("بلا منع (الاختبار الحالي)", None),
+    ("منع 12س بعد الخسارة فقط", {"loss_h": 12}),
+    ("12س + وقفان خلال 7 أيام = 72س (قاعدة البوت حتى اليوم)", {"loss_h": 12, "strike_limit": 2, "strike_h": 72}),
+    ("12س + 72س + ثلاثة وقوف = أسبوع (القاعدة الجديدة)",
+     {"loss_h": 12, "strike_limit": 2, "strike_h": 72, "long_limit": 3, "long_h": 168}),
+    ("منع 4س بعد الخسارة فقط", {"loss_h": 4}),
+]
+
+
+def cooldown_models(datasets: list[tuple], params: dict, position_usd: float, fee_usd: float, bt_kw: dict) -> list[dict]:
+    """Do the live rest/ban rules after losses help or hurt? Same coins, same everything else."""
+    known = {f.name for f in fields(StrategyParams)}
+    p = StrategyParams(**{k: v for k, v in params.items() if k in known})
+    series = [(pool, clean_candles([Candle(*c) for c in cs]), liq) for pool, cs, liq in datasets]
+    out = []
+    for name, cd in COOLDOWN_MODELS:
+        per = {"A": [], "B": []}
+        for pool, cs, liq in series:
+            r = backtest(cs, p.zigzag_pct, p, liq, position_usd, tx_fee_usd=fee_usd, cooldowns=cd, **(bt_kw or {}))
+            per[split_of(pool)] += [x * 100 for x in r.returns]
+        out.append({"name": name, "all": _stats(per["A"] + per["B"]), "a": _stats(per["A"]), "b": _stats(per["B"])})
+    return out
+
+
+def format_cooldown_models(rows: list[dict]) -> str:
+    L = ["⏸ <b>هل يفيد منع العملة بعد الخسارة؟</b> (الاختبار الواقعي، كل العملات المخزنة)"]
+    for r in rows:
+        a = r["all"]
+        L.append(f"<b>{r['name']}</b>")
+        L.append(_row("• الكل", a))
+        if a["n"]:
+            L.append(f"• A: {r['a']['n']} صفقة · مجموع {r['a'].get('total', 0):+.0f}% · B: {r['b']['n']} صفقة · "
+                     f"مجموع {r['b'].get('total', 0):+.0f}%")
+    return "\n".join(L)

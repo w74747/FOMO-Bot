@@ -133,3 +133,16 @@ def test_selection_test_is_out_of_sample():
                        {"bounce_pct": 0.02, "entry_slip": 0.007, "body_only": True})
     assert r["cutoffs"] > 0 and len(r["rules"]) == 7
     assert "شرط قبول العملة" in format_selection(r)
+
+
+def test_backtest_cooldowns_only_remove_trades():
+    from src.analysis.backtest import backtest
+    from src.analysis.regime import cooldown_models
+    p = StrategyParams.from_settings(settings)
+    cs = wave_candles(hours=900, period=26)
+    free = backtest(cs, p.zigzag_pct, p, 300_000, 20, bounce_pct=0.02, body_only=True)
+    rest = backtest(cs, p.zigzag_pct, p, 300_000, 20, bounce_pct=0.02, body_only=True,
+                    cooldowns={"loss_h": 48, "strike_limit": 1, "strike_h": 200})
+    assert rest.trades <= free.trades
+    ds = [(f"pool{i}", [tuple(c) for c in wave_candles(hours=700, period=30 + i)], 300_000) for i in range(3)]
+    assert len(cooldown_models(ds, asdict(p), 20, 0.02, {"bounce_pct": 0.02, "body_only": True})) == 5
