@@ -167,3 +167,15 @@ def test_skip_gates_default_is_live_gate_and_downtrend_can_be_skipped():
     assert allrows[3]["all"]["n"] >= allrows[0]["all"]["n"] > 0
     txt = format_gate_models(allrows, "t")
     assert "بدون الفلترين" in txt and "A:" in txt
+
+
+def test_gate_models_robustness_fields():
+    from src.analysis.regime import format_gate_models, gate_models
+    p = StrategyParams(zigzag_pct=0.14, entry_drop_factor=1.0, tp1_factor=0.7, tp2_factor=1.1, stop_drop_factor=0.7)
+    alive = wave_candles(hours=700, period=30)
+    dead = wave_candles(hours=600, period=30, drift_per_day=-6)       # stops 100 h earlier
+    ds = [("poolA", [tuple(c) for c in alive], 300_000), ("poolB", [tuple(c) for c in dead], 300_000)]
+    rows = gate_models(ds, asdict(p), 20, 0.0, {})
+    assert rows[0]["n_stale"] == 1 and "gain" in rows[3] and "gain" not in rows[0]
+    assert rows[3]["dead"]["n"] > 0 and abs(rows[3]["gain"]["total"] - rows[3]["gain"]["top3"]) < 1e-9
+    assert "توقفت بياناتها" in format_gate_models(rows, "t")

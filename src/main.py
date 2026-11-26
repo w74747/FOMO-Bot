@@ -160,6 +160,12 @@ async def main():
             if await tg.cooldown_job():
                 await state.set_meta("cool_v1", "done")
 
+    async def gate_once():
+        await asyncio.sleep(180)
+        if db.ready and not await state.get_meta("gate_v1") and tg._guard("whatif"):
+            if await tg.whatif_job(""):
+                await state.set_meta("gate_v1", "done")
+
     async def missed_once():
         await asyncio.sleep(150)
         if db.ready and not await state.get_meta("missed_v2"):
@@ -251,6 +257,7 @@ async def main():
         asyncio.create_task(diagnose_once(), name="diagnose-once"),
         asyncio.create_task(missed_once(), name="missed-once"),
         asyncio.create_task(cooldown_once(), name="cooldown-once"),
+        asyncio.create_task(gate_once(), name="gate-once"),
         asyncio.create_task(reconcile_once(), name="reconcile-once"),
         asyncio.create_task(autopilot_loop(), name="autopilot"),
         asyncio.create_task(price_recorder(), name="price-recorder"),

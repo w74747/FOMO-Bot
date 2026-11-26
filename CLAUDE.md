@@ -52,7 +52,7 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   new high (shadow bt_blocked). Liquidity-collapse bans (72 h) stay.
 
 ## Workflow
-- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (94 passing as of
+- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (95 passing as of
   2026-11-26). Check for "FAILED" explicitly before committing.
 - Commit to feature/wave-scanner, push it and push it to main (Railway deploys main).
   After deploy, read Railway logs (startup, "strategy health", "shadow:" lines).
@@ -83,6 +83,10 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   and lower-lows score gates (backtest skip_gates; live never uses it). Without a mint: all stored
   pools, A/B by pool hash. Abdullah asked why steady-waving but falling coins (CYBERLEEK, VEIL,
   swordcat) are rejected; relaxing the gate needs the usual >= 10% on B / not worse on A.
+  Result 2026-11-26 (258 pools): no lower-lows gate +4627% (A +2326 / B +2302) vs current
+  +2467% (A +1306 / B +1161), median 2.5% vs 0.6%; no downtrend gate fails (A worse). The three
+  coins themselves still lose without the gates. Robustness check (dead pools, concentration)
+  = one-off gate_v1 job. Proposal to Abdullah pending; NOT applied.
 - Shadow gate: first 10 paper trades +5.5%/trade, next ones negative; reconcile again after
   the no-rest change.
 - Re-test single trailing exit on 1-minute Jupiter prices (jup_prices) after ~1 week.

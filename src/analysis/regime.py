@@ -460,19 +460,41 @@ def gate_models(datasets: list[tuple], params: dict, position_usd: float, fee_us
     known = {f.name for f in fields(StrategyParams)}
     p = StrategyParams(**{k: v for k, v in params.items() if k in known})
     series = [(pool, clean_candles([Candle(*c) for c in cs]), liq) for pool, cs, liq in datasets]
+    series = [x for x in series if x[1]]
     caches = {pool: {} for pool, _, _ in series}
+    # survivorship check: a pool whose candles stop > 48 h before the newest one died or was dropped
+    newest = max((cs[-1].ts for _, cs, _ in series), default=0)
+    stale = {pool for pool, cs, _ in series if newest - cs[-1].ts > 48 * 3600}
     out = []
     for name, skip in GATE_MODELS:
         per = {"A": [], "B": []}
         coins = 0
+        by_pool: dict[str, float] = {}
+        dead: list[float] = []
         for pool, cs, liq in series:
             r = backtest(cs, p.zigzag_pct, p, liq, position_usd, tx_fee_usd=fee_usd, stats_cache=caches[pool],
                          skip_gates=skip, **(bt_kw or {}))
-            per[split_of(pool)] += [x * 100 for x in r.returns]
+            rs = [x * 100 for x in r.returns]
+            per[split_of(pool)] += rs
             coins += bool(r.trades)
+            by_pool[pool] = sum(rs)
+            if pool in stale:
+                dead += rs
         rets = per["A"] + per["B"]
         out.append({"name": name, "coins": coins, "all": _stats(rets), "a": _stats(per["A"]), "b": _stats(per["B"]),
-                    "median": statistics.median(rets) if rets else 0.0})
+                    "median": statistics.median(rets) if rets else 0.0, "dead": _stats(dead),
+                    "n_stale": len(stale), "by_pool": by_pool,
+                    "worst": min(rets) if rets else 0.0})
+    base = out[0]["by_pool"]
+    for r in out[1:]:
+        gain = {k: v - base.get(k, 0.0) for k, v in r["by_pool"].items()}
+        total = sum(gain.values())
+        top3 = sum(sorted(gain.values(), reverse=True)[:3])
+        r["gain"] = {"total": total, "top3": top3, "pos": sum(1 for v in gain.values() if v > 0.5),
+                     "neg": sum(1 for v in gain.values() if v < -0.5),
+                     "ex_top3": total - top3}
+    for r in out:
+        r.pop("by_pool")
     return out
 
 
@@ -509,4 +531,10 @@ def format_gate_models(rows: list[dict], title: str) -> str:
             L.append(f"• A: {r['a']['n']} صفقة · مجموع {r['a'].get('total', 0):+.0f}% · "
                      f"B: {r['b']['n']} صفقة · مجموع {r['b'].get('total', 0):+.0f}%"
                      + (f" · أسوأ صفقة {r['worst']:+.1f}%" if "worst" in r else ""))
+        if "dead" in r and r["dead"]["n"]:
+            L.append(_row(f"• مجمعات توقفت بياناتها ({r['n_stale']})", r["dead"]))
+        if "gain" in r:
+            g = r["gain"]
+            L.append(f"• الفرق عن الحالي: {g['total']:+.0f}% · منها أكبر 3 مجمعات {g['top3']:+.0f}% · "
+                     f"بدونها {g['ex_top3']:+.0f}% · تحسن في {g['pos']} مجمع وتراجع في {g['neg']}")
     return "\n".join(L)
