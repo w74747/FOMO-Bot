@@ -85,8 +85,11 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   swordcat) are rejected; relaxing the gate needs the usual >= 10% on B / not worse on A.
   Result 2026-11-26 (258 pools): no lower-lows gate +4627% (A +2326 / B +2302) vs current
   +2467% (A +1306 / B +1161), median 2.5% vs 0.6%; no downtrend gate fails (A worse). The three
-  coins themselves still lose without the gates. Robustness check (dead pools, concentration)
-  = one-off gate_v1 job. Proposal to Abdullah pending; NOT applied.
+  coins themselves still lose without the gates. Robustness (gate_v1): lower-lows gain is broad
+  (48 pools better / 19 worse, +1625% without the top 3; pools with stale data gain too, worst
+  trade unchanged -29.4%); downtrend gain is 3 pools only (rest -87%) -> keep that gate.
+  Proposal to Abdullah: drop only the lower-lows gate (score() in waves.py, so scanner, back-test
+  and shadow change together), ideally after the 2026-11-27 no-rest check. NOT applied.
 - Shadow gate: first 10 paper trades +5.5%/trade, next ones negative; reconcile again after
   the no-rest change.
 - Re-test single trailing exit on 1-minute Jupiter prices (jup_prices) after ~1 week.
