@@ -146,3 +146,24 @@ def test_backtest_cooldowns_only_remove_trades():
     assert rest.trades <= free.trades
     ds = [(f"pool{i}", [tuple(c) for c in wave_candles(hours=700, period=30 + i)], 300_000) for i in range(3)]
     assert len(cooldown_models(ds, asdict(p), 20, 0.02, {"bounce_pct": 0.02, "body_only": True})) == 5
+
+
+def test_skip_gates_default_is_live_gate_and_downtrend_can_be_skipped():
+    from src.analysis.backtest import backtest
+    from src.analysis.regime import coin_gate_models, format_gate_models, gate_models
+    p = StrategyParams(zigzag_pct=0.14, entry_drop_factor=1.0, tp1_factor=0.7, tp2_factor=1.1, stop_drop_factor=0.7)
+    flat = wave_candles(hours=700, period=30)
+    assert backtest(flat, p.zigzag_pct, p, 300_000, 20).returns == \
+        backtest(flat, p.zigzag_pct, p, 300_000, 20, skip_gates=()).returns
+    falling = wave_candles(hours=700, period=30, drift_per_day=-6)
+    live = backtest(falling, p.zigzag_pct, p, 300_000, 20)
+    nogate = backtest(falling, p.zigzag_pct, p, 300_000, 20, skip_gates=("downtrend", "lower lows"))
+    assert live.trades == 0 and nogate.trades > 0          # the gate is what blocked every entry
+    rows = coin_gate_models([tuple(c) for c in falling], 300_000, asdict(p), 20, 0.0, {})
+    assert len(rows) == 4 and rows[0]["all"]["n"] == 0 and rows[3]["all"]["n"] == nogate.trades
+    assert rows[3]["a"]["n"] + rows[3]["b"]["n"] == nogate.trades
+    ds = [("poolA", [tuple(c) for c in flat], 300_000), ("poolB", [tuple(c) for c in falling], 300_000)]
+    allrows = gate_models(ds, asdict(p), 20, 0.0, {})
+    assert allrows[3]["all"]["n"] >= allrows[0]["all"]["n"] > 0
+    txt = format_gate_models(allrows, "t")
+    assert "بدون الفلترين" in txt and "A:" in txt

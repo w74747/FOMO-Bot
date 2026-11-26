@@ -444,3 +444,69 @@ def format_cooldown_models(rows: list[dict]) -> str:
             L.append(f"• A: {r['a']['n']} صفقة · مجموع {r['a'].get('total', 0):+.0f}% · B: {r['b']['n']} صفقة · "
                      f"مجموع {r['b'].get('total', 0):+.0f}%")
     return "\n".join(L)
+
+
+GATE_MODELS = [
+    ("القواعد الحالية (فلتر الاتجاه + القيعان)", ()),
+    ("بدون فلتر الاتجاه الهابط", ("downtrend",)),
+    ("بدون فلتر القيعان المتناقصة", ("lower lows",)),
+    ("بدون الفلترين", ("downtrend", "lower lows")),
+]
+
+
+def gate_models(datasets: list[tuple], params: dict, position_usd: float, fee_usd: float, bt_kw: dict) -> list[dict]:
+    """Research: what do the downtrend / lower-lows filters cost or save? Same coins, same
+    realistic back-test, only the wave-score gate differs. A/B halves split by pool hash."""
+    known = {f.name for f in fields(StrategyParams)}
+    p = StrategyParams(**{k: v for k, v in params.items() if k in known})
+    series = [(pool, clean_candles([Candle(*c) for c in cs]), liq) for pool, cs, liq in datasets]
+    caches = {pool: {} for pool, _, _ in series}
+    out = []
+    for name, skip in GATE_MODELS:
+        per = {"A": [], "B": []}
+        coins = 0
+        for pool, cs, liq in series:
+            r = backtest(cs, p.zigzag_pct, p, liq, position_usd, tx_fee_usd=fee_usd, stats_cache=caches[pool],
+                         skip_gates=skip, **(bt_kw or {}))
+            per[split_of(pool)] += [x * 100 for x in r.returns]
+            coins += bool(r.trades)
+        rets = per["A"] + per["B"]
+        out.append({"name": name, "coins": coins, "all": _stats(rets), "a": _stats(per["A"]), "b": _stats(per["B"]),
+                    "median": statistics.median(rets) if rets else 0.0})
+    return out
+
+
+def coin_gate_models(candles: list[tuple], liq: float, params: dict, position_usd: float, fee_usd: float,
+                     bt_kw: dict) -> list[dict]:
+    """The same comparison for one coin; halves = first / second half of the tested period."""
+    known = {f.name for f in fields(StrategyParams)}
+    p = StrategyParams(**{k: v for k, v in params.items() if k in known})
+    cs = clean_candles([Candle(*c) for c in candles])
+    cache: dict = {}
+    out = []
+    for name, skip in GATE_MODELS:
+        log: list = []
+        r = backtest(cs, p.zigzag_pct, p, liq, position_usd, tx_fee_usd=fee_usd, stats_cache=cache,
+                     trade_log=log, skip_gates=skip, **(bt_kw or {}))
+        start = cs[min(240, len(cs) - 1)].ts if cs else 0
+        mid = (start + cs[-1].ts) / 2 if cs else 0
+        a = [x * 100 for ts, x in log if ts < mid]
+        b = [x * 100 for ts, x in log if ts >= mid]
+        out.append({"name": name, "days": r.test_days, "all": _stats(a + b), "a": _stats(a), "b": _stats(b),
+                    "worst": r.worst_trade_pct,
+                    "median": statistics.median(a + b) if a or b else 0.0})
+    return out
+
+
+def format_gate_models(rows: list[dict], title: str) -> str:
+    L = [title]
+    for r in rows:
+        a = r["all"]
+        extra = f" · {r['coins']} عملة" if "coins" in r else ""
+        L.append(f"<b>{r['name']}</b>{extra}")
+        L.append(_row("• الكل", a) + (f" · وسيط {r['median']:+.1f}%" if a["n"] else ""))
+        if a["n"]:
+            L.append(f"• A: {r['a']['n']} صفقة · مجموع {r['a'].get('total', 0):+.0f}% · "
+                     f"B: {r['b']['n']} صفقة · مجموع {r['b'].get('total', 0):+.0f}%"
+                     + (f" · أسوأ صفقة {r['worst']:+.1f}%" if "worst" in r else ""))
+    return "\n".join(L)

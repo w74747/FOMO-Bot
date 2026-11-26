@@ -80,6 +80,7 @@ def backtest(
     level_log: dict | None = None,
     trail_only: float | None = None,
     cooldowns: dict | None = None,
+    skip_gates: tuple[str, ...] = (),
 ) -> BacktestResult:
     """`bounce_pct` (optional) models the live entry: after the price touches the entry level the
     bot waits for a bounce of `bounce_pct` off the lowest price since, then buys `entry_slip`
@@ -89,6 +90,10 @@ def backtest(
     `body_only`: events in our favour (touching the entry zone, the bounce low, target 1, the
     trailing peak) only count inside the candle body (open..close); wicks still hit stops.
     A wick is often one trade on one pool that the aggregated live price never shows.
+
+    `skip_gates` (research only): wave-score rejection reasons starting with these prefixes
+    (e.g. "downtrend", "lower lows") are ignored, to measure what a filter costs or saves.
+    Live never uses it; the default () is the live gate.
 
     `stats_cache` (optional) memoises wave stats per refit bar; it is only valid for one
     candle series and one zigzag pct, and lets the optimiser reuse work across parameter sets."""
@@ -133,7 +138,9 @@ def backtest(
                 if stats_cache is not None:
                     stats_cache[i] = stats
             # same gate as live: the coin must still pass the wave score filters at this point in time
-            tradeable = bool(stats) and not score(stats, liquidity_usd, params.max_cycle_hours)[1] and build_plan(
+            gate = [r for r in score(stats, liquidity_usd, params.max_cycle_hours)[1]
+                    if not r.startswith(skip_gates)] if stats else ["no stats"]
+            tradeable = bool(stats) and not gate and build_plan(
                 stats.last_high, stats.median_drop, stats.median_rise, stats.avg_cycle_hours,
                 liquidity_usd, position_usd, params, tx_fee_usd) is not None
             if stats and pos is None:
