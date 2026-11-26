@@ -88,8 +88,10 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   coins themselves still lose without the gates. Robustness (gate_v1): lower-lows gain is broad
   (48 pools better / 19 worse, +1625% without the top 3; pools with stale data gain too, worst
   trade unchanged -29.4%); downtrend gain is 3 pools only (rest -87%) -> keep that gate.
-  Proposal to Abdullah: drop only the lower-lows gate (score() in waves.py, so scanner, back-test
-  and shadow change together), ideally after the 2026-11-27 no-rest check. NOT applied.
+  APPROVED by Abdullah 2026-11-26: drop only the lower-lows gate (score() in waves.py, so
+  scanner, back-test and shadow change together; keep the downtrend gate), AFTER the
+  2026-11-27 no-rest check (reconcile: does paper take the back-test's trades?). Do the check
+  first and report it; then apply, tests, deploy, /whatif again. Not applied yet.
 - Shadow gate: first 10 paper trades +5.5%/trade, next ones negative; reconcile again after
   the no-rest change.
 - Re-test single trailing exit on 1-minute Jupiter prices (jup_prices) after ~1 week.
