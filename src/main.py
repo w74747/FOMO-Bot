@@ -166,6 +166,16 @@ async def main():
             if await tg.whatif_job(""):
                 await state.set_meta("gate_v1", "done")
 
+    async def check_1127_once():
+        """2026-11-27: since the no-rest change (deploy 2026-11-24 19:24 UTC), does paper take the
+        back-test's trades? Reconcile + missed opportunities since then."""
+        from datetime import datetime, timezone
+        await asyncio.sleep(200)
+        if db.ready and not await state.get_meta("check1127") and tg._guard("reconcile"):
+            await tg.reconcile_job(send=True)
+            await tg.missed_job(send=True, since_dt=datetime(2026, 11, 24, 19, 24, tzinfo=timezone.utc))
+            await state.set_meta("check1127", "done")
+
     async def missed_once():
         await asyncio.sleep(150)
         if db.ready and not await state.get_meta("missed_v2"):
@@ -258,6 +268,7 @@ async def main():
         asyncio.create_task(missed_once(), name="missed-once"),
         asyncio.create_task(cooldown_once(), name="cooldown-once"),
         asyncio.create_task(gate_once(), name="gate-once"),
+        asyncio.create_task(check_1127_once(), name="check-1127"),
         asyncio.create_task(reconcile_once(), name="reconcile-once"),
         asyncio.create_task(autopilot_loop(), name="autopilot"),
         asyncio.create_task(price_recorder(), name="price-recorder"),

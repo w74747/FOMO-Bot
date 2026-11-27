@@ -628,15 +628,15 @@ class TelegramController:
             logger.exception("cooldown models failed")
             return None
 
-    async def missed_job(self, send: bool = True) -> str | None:
-        from datetime import datetime, timezone
+    async def missed_job(self, send: bool = True, since_dt=None) -> str | None:
+        from datetime import datetime, timedelta, timezone
 
         from src.analysis.diagnose import format_missed, missed_opportunities
         try:
-            since_dt = datetime(2026, 11, 19, 6, 15, tzinfo=timezone.utc)
+            since_dt = since_dt or datetime(2026, 11, 19, 6, 15, tzinfo=timezone.utc)
             datasets = await self._datasets_by_mint(None)
             symbols = {p["mint"]: p.get("symbol") for p in await self.db.tracked_pools(min_candles=100)}
-            analyses = await self.db.analyses_since(since_dt.replace(day=18))
+            analyses = await self.db.analyses_since(since_dt - timedelta(days=1))
             ours = await self._actual_paper_trades()
             params = await load_params(self.state, self.s)
             fee_usd = await self.state.tx_fee_usd(self.s)
