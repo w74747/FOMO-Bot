@@ -92,6 +92,13 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   scanner, back-test and shadow change together; keep the downtrend gate), AFTER the
   2026-11-27 no-rest check (reconcile: does paper take the back-test's trades?). Do the check
   first and report it; then apply, tests, deploy, /whatif again. Not applied yet.
+  11-27 check result (one-off check1127): since the no-rest deploy only 1 paper trade (CBUCKS
+  +9.1%, time stop, NOT a back-test trade: Jupiter price touched a level 2.3% above the pool
+  candles' entry level); the back-test took 2 trades on watchlist coins that paper missed
+  (FLOAT +17%, CBUCKS +15%; shadow showed bt_in_trade 26/11 01:26-10:41). Rests were not the
+  cause; the gap is entry desync (Jupiter price vs pool candles; overall reconcile: 18 "level
+  reached but bt saw no bounce", 15 "pool candle never reached the level"). Condition "trades
+  match" NOT met -> lower-lows change held, asked Abdullah (apply anyway vs fix desync first).
 - Shadow gate: first 10 paper trades +5.5%/trade, next ones negative; reconcile again after
   the no-rest change.
 - Re-test single trailing exit on 1-minute Jupiter prices (jup_prices) after ~1 week.
