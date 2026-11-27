@@ -176,6 +176,20 @@ async def main():
             await tg.missed_job(send=True, since_dt=datetime(2026, 11, 24, 19, 24, tzinfo=timezone.utc))
             await state.set_meta("check1127", "done")
 
+    async def paper_only_once():
+        """2026-11-27, Abdullah: paper only for 3 days after dropping the lower-lows gate, then he
+        decides on live. Autopilot off (so it cannot start live by itself) and live off."""
+        await asyncio.sleep(30)
+        if await state.get_meta("paper_only_1127"):
+            return
+        if autopilot:
+            await autopilot.disable()
+        await state.set_live_enabled(False)
+        logger.info("paper-only mode: autopilot disabled, live off (until Abdullah re-enables)")
+        await tg.send("🧪 <b>وضع ورقي فقط</b> لمدة 3 أيام (حتى 30/11): أُلغي فلتر القيعان المتناقصة، "
+                      "والطيار الآلي والتداول الحقيقي متوقفان. نراجع النتائج ثم تقرر أنت متى نعود للحقيقي.")
+        await state.set_meta("paper_only_1127", "done")
+
     async def missed_once():
         await asyncio.sleep(150)
         if db.ready and not await state.get_meta("missed_v2"):
@@ -269,6 +283,7 @@ async def main():
         asyncio.create_task(cooldown_once(), name="cooldown-once"),
         asyncio.create_task(gate_once(), name="gate-once"),
         asyncio.create_task(check_1127_once(), name="check-1127"),
+        asyncio.create_task(paper_only_once(), name="paper-only-1127"),
         asyncio.create_task(reconcile_once(), name="reconcile-once"),
         asyncio.create_task(autopilot_loop(), name="autopilot"),
         asyncio.create_task(price_recorder(), name="price-recorder"),

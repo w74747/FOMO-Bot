@@ -30,6 +30,15 @@ def test_downtrend_is_rejected():
     assert any("downtrend" in r or "lower lows" in r for r in reasons)
 
 
+def test_lower_lows_alone_is_not_rejected():
+    from dataclasses import replace
+    st = replace(wave_stats(wave_candles(), 0.10), lows_trend_pct_day=-5.0)
+    sc, reasons = score(st, 300_000)
+    assert reasons == []
+    sc0, _ = score(wave_stats(wave_candles(), 0.10), 300_000)
+    assert sc < sc0                      # still costs score points
+
+
 def test_flat_coin_is_rejected():
     st = wave_stats(wave_candles(amp=0.02, noise=0.002), 0.10)
     _, reasons = score(st, 300_000)

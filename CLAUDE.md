@@ -52,14 +52,24 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   new high (shadow bt_blocked). Liquidity-collapse bans (72 h) stay.
 
 ## Workflow
-- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (95 passing as of
-  2026-11-26). Check for "FAILED" explicitly before committing.
+- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (96 passing as of
+  2026-11-27). Check for "FAILED" explicitly before committing.
 - Commit to feature/wave-scanner, push it and push it to main (Railway deploys main).
   After deploy, read Railway logs (startup, "strategy health", "shadow:" lines).
 - Telegram "Conflict: terminated by other getUpdates" right after a deploy is the old
   instance shutting down — harmless.
 
-## Current state (2026-11-24)
+## Current state (2026-11-27)
+- PAPER ONLY until Abdullah decides (his call 2026-11-27): the lower-lows gate was dropped and
+  the bot runs paper only for 3 days (to 2026-11-30) to watch the results. One-off
+  paper_only_1127 disabled the autopilot and set live off. The monitor must NOT re-enable
+  /live auto or live; on 2026-11-30 review the paper trades since the deploy (avg, vs back-test
+  via /reconcile) and give Abdullah a recommendation. Re-enabling /live auto resets the kill
+  switch baseline (auto_since).
+- Lower-lows gate REMOVED 2026-11-27 from score() in waves.py (no rejection; it still lowers the
+  score). Downtrend gate kept. Entry desync (Jupiter price vs pool candles) is still open.
+
+## State before 2026-11-27 (history)
 - Live trading OFF: the autopilot (/live auto, still enabled) switched it off on 2026-11-24
   (last 8 paper trades averaged -2.18%). It restarts by itself only when health > +2%, the
   last 10 paper trades average > 0% and 12 h passed. Kill switch: drawdown since /live auto is
@@ -89,9 +99,7 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   (48 pools better / 19 worse, +1625% without the top 3; pools with stale data gain too, worst
   trade unchanged -29.4%); downtrend gain is 3 pools only (rest -87%) -> keep that gate.
   APPROVED by Abdullah 2026-11-26: drop only the lower-lows gate (score() in waves.py, so
-  scanner, back-test and shadow change together; keep the downtrend gate), AFTER the
-  2026-11-27 no-rest check (reconcile: does paper take the back-test's trades?). Do the check
-  first and report it; then apply, tests, deploy, /whatif again. Not applied yet.
+  scanner, back-test and shadow change together; keep the downtrend gate). APPLIED 2026-11-27.
   11-27 check result (one-off check1127): since the no-rest deploy only 1 paper trade (CBUCKS
   +9.1%, time stop, NOT a back-test trade: Jupiter price touched a level 2.3% above the pool
   candles' entry level); the back-test took 2 trades on watchlist coins that paper missed

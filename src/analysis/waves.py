@@ -216,8 +216,9 @@ def score(stats: WaveStats, liquidity_usd: float, max_cycle_hours: float = MAX_C
         reasons.append(f"waves too slow ({stats.avg_cycle_hours:.0f}h cycle)")
     if stats.trend_pct_day < -4:
         reasons.append(f"downtrend {stats.trend_pct_day:.1f}%/day")
-    if stats.lows_trend_pct_day < -3:
-        reasons.append(f"lower lows {stats.lows_trend_pct_day:.1f}%/day")
+    # No "lower lows" rejection since 2026-11-27 (approved by Abdullah): on all stored pools the
+    # realistic back-test without it was about +80-100% better on both A and B halves, with the
+    # gain spread across many pools. It still lowers the score below. The downtrend gate stays.
 
     s = 0.0
     s += 25 * _clamp(stats.n_cycles / 8)
