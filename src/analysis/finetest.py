@@ -27,7 +27,7 @@ REFIT_H = 24
 
 def backtest_fine(hourly: list[Candle], fine: list[Candle], params: StrategyParams, liquidity_usd: float,
                   position_usd: float, tx_fee_usd: float = 0.0, mode: str = "close", bounce: float = 0.02,
-                  slip: float = 0.007, detail: list | None = None) -> list[float]:
+                  slip: float = 0.007, detail: list | None = None, stats_cache: dict | None = None) -> list[float]:
     """Returns the list of trade returns (fractions). `detail` gets one dict per trade."""
     if len(hourly) < WARMUP_H + 24 or not fine:
         return []
@@ -49,7 +49,13 @@ def backtest_fine(hourly: list[Candle], fine: list[Candle], params: StrategyPara
             continue
         if fit_at is None or h - fit_at >= REFIT_H:
             fit_at = h
-            stats = wave_stats(hourly[:h], params.zigzag_pct)
+            key = (h, params.zigzag_pct)
+            if stats_cache is not None and key in stats_cache:
+                stats = stats_cache[key]
+            else:
+                stats = wave_stats(hourly[:h], params.zigzag_pct)
+                if stats_cache is not None:
+                    stats_cache[key] = stats
             gate = score(stats, liquidity_usd, params.max_cycle_hours)[1] if stats else ["no stats"]
             tradeable = bool(stats) and not gate and build_plan(
                 stats.last_high, stats.median_drop, stats.median_rise, stats.avg_cycle_hours,
@@ -211,4 +217,79 @@ def format_fine_models(res: dict) -> str:
                  f"B: {r['b']['n']} صفقة · متوسط {r['b'].get('avg', 0):+.2f}%")
     L.append("ℹ️ «5 دقائق، عند الإغلاق» هو الأقرب لما يستطيع البوت فعله (يرى السعر كل ثانيتين). "
              "تحليل فقط: قواعد التداول لم تتغير.")
+    return "\n".join(L)
+
+
+# ---------------------------------------------------------------- parameter search (research)
+GRID = {
+    "bounce": (0.01, 0.02, 0.03, 0.05),
+    "entry_drop_factor": (0.8, 1.0, 1.2),
+    "stop_drop_factor": (0.5, 0.7, 1.0),
+    "tp1_factor": (0.5, 0.7, 1.0),
+    "trail_factor": (0.3, 0.4, 0.6),
+}
+
+
+def fine_grid(datasets: list[tuple], params: dict, position_usd: float, fee_usd: float, bt_kw: dict,
+              min_days: float = 2.0, grid: dict | None = None, min_n: int = 25) -> dict:
+    """Every combination of GRID on the honest 5-minute-close model, A/B by pool hash.
+    Ranked by the WORSE of the two halves' average (robust to one lucky half); a combination
+    needs >= min_n trades in each half to be ranked (fewer = noise)."""
+    import itertools
+    from dataclasses import replace
+    grid = grid or GRID
+    known = {f.name for f in fields(StrategyParams)}
+    base = StrategyParams(**{k: v for k, v in params.items() if k in known})
+    slip = (bt_kw or {}).get("entry_slip", 0.007)
+    cur_bounce = (bt_kw or {}).get("bounce_pct", 0.02)
+    series = []
+    for pool, hraw, fraw, liq in datasets:
+        hourly = clean_candles([Candle(*c) for c in hraw])
+        fine = sorted((Candle(*c) for c in fraw), key=lambda c: c.ts)
+        if not fine or len(hourly) < WARMUP_H + 24 or (fine[-1].ts - fine[0].ts) / 86400 < min_days:
+            continue
+        series.append((split_of(pool), [c for c in hourly if c.ts < fine[-1].ts], fine, liq, {}))
+    keys = list(grid)
+    rows = []
+    for combo in itertools.product(*(grid[k] for k in keys)):
+        c = dict(zip(keys, combo))
+        bounce = c.pop("bounce")
+        p = replace(base, **c)
+        per = {"A": [], "B": []}
+        for side, hourly, fine, liq, cache in series:
+            per[side] += [r * 100 for r in backtest_fine(hourly, fine, p, liq, position_usd, fee_usd, mode="close",
+                                                         bounce=bounce, slip=slip, stats_cache=cache)]
+        a, b = _stats(per["A"]), _stats(per["B"])
+        rows.append({"bounce": bounce, **c, "a": a, "b": b, "all": _stats(per["A"] + per["B"]),
+                     "current": bounce == cur_bounce and all(getattr(base, k) == v for k, v in c.items())})
+    for r in rows:
+        r["robust"] = (min(r["a"]["avg"], r["b"]["avg"])
+                       if r["a"]["n"] >= min_n and r["b"]["n"] >= min_n else -99)
+    rows.sort(key=lambda r: r["robust"], reverse=True)
+    cur = next((r for r in rows if r["current"]), None)
+    return {"pools": len(series), "combos": len(rows), "top": rows[:8], "current": cur,
+            "positive_both": sum(1 for r in rows if r["robust"] > 0)}
+
+
+def _row_line(r: dict) -> str:
+    return (f"ارتداد {r['bounce']*100:.0f}% · دخول ×{r['entry_drop_factor']} · وقف ×{r['stop_drop_factor']} · "
+            f"هدف1 ×{r['tp1_factor']} · متحرك ×{r['trail_factor']}\n"
+            f"  {r['all']['n']} صفقة · فوز {r['all'].get('win', 0):.0f}% · متوسط {r['all'].get('avg', 0):+.2f}% · "
+            f"وسيط {r['all'].get('median', 0):+.1f}% · "
+            f"A {r['a'].get('avg', 0):+.2f}% ({r['a']['n']}) · B {r['b'].get('avg', 0):+.2f}% ({r['b']['n']})")
+
+
+def format_fine_grid(res: dict) -> str:
+    L = [f"🔬 <b>بحث الإعدادات على شموع 5 دقائق (عند الإغلاق)</b>: {res['combos']} تركيبة، {res['pools']} مجمع، "
+         "مرتبة حسب أضعف النصفين A/B (25 صفقة على الأقل في كل نصف)"]
+    if not res["pools"]:
+        return L[0] + "\nلا توجد بيانات 5 دقائق كافية بعد."
+    if res["current"]:
+        L.append("<b>الإعدادات الحالية</b>\n" + _row_line(res["current"]))
+    L.append(f"تركيبات رابحة في النصفين معاً: {res['positive_both']} من {res['combos']}")
+    L.append("<b>الأفضل</b>")
+    for i, r in enumerate(res["top"], 1):
+        L.append(f"{i}. " + _row_line(r))
+    L.append("⚠️ مع مئات التركيبات على نحو 20 يوماً، جزء من تفوق الأفضل حظ؛ نعتمد فقط ما يبقى جيداً "
+             "على بيانات الأيام القادمة.\nℹ️ تحليل فقط: لا يتغير شيء في التداول قبل موافقتك.")
     return "\n".join(L)

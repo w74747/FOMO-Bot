@@ -60,6 +60,7 @@ COMMANDS = [
     ("reconcile", "مطابقة صفقاتنا الفعلية مع الاختبار صفقة بصفقة"),
     ("whatif", "ماذا لو ألغينا فلتر الاتجاه؟ /whatif [عنوان] (تحليل فقط)"),
     ("finetest", "اختبار الاستراتيجية على شموع 5 دقائق (تحليل فقط)"),
+    ("finegrid", "بحث أفضل الإعدادات على شموع 5 دقائق (تحليل فقط)"),
     ("params", "الإعدادات الحالية للاستراتيجية"),
     ("resetparams", "العودة للإعدادات الافتراضية"),
     ("wallet", "المحفظة الحقيقية والرصيد"),
@@ -125,7 +126,7 @@ class TelegramController:
             "scan": self.cmd_scan, "token": self.cmd_token, "pause": self.cmd_pause,
             "resume": self.cmd_resume, "closeall": self.cmd_closeall, "report": self.cmd_report,
             "collect": self.cmd_collect, "optimize": self.cmd_optimize, "apply": self.cmd_apply,
-            "regime": self.cmd_regime, "reconcile": self.cmd_reconcile, "whatif": self.cmd_whatif, "finetest": self.cmd_finetest,
+            "regime": self.cmd_regime, "reconcile": self.cmd_reconcile, "whatif": self.cmd_whatif, "finetest": self.cmd_finetest, "finegrid": self.cmd_finegrid,
             "params": self.cmd_params, "resetparams": self.cmd_resetparams,
             "watch": self.cmd_watch, "unwatch": self.cmd_unwatch, "mylist": self.cmd_mylist,
             "ban": self.cmd_ban, "unban": self.cmd_unban,
@@ -552,25 +553,41 @@ class TelegramController:
         await self._reply(update, "⏳ أختبر الاستراتيجية على شموع 5 دقائق… (دقائق)")
         self._spawn(self.fine_job())
 
-    async def fine_job(self) -> str | None:
-        from src.analysis.finetest import fine_models, format_fine_models
+    async def cmd_finegrid(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.db.ready:
+            await self._reply(update, "قاعدة البيانات غير متصلة.")
+            return
+        if not self._guard("finegrid"):
+            await self._reply(update, "⏳ بحث الإعدادات يعمل بالفعل.")
+            return
+        await self._reply(update, "⏳ أجرب 324 تركيبة على شموع 5 دقائق… (عدة دقائق)")
+        self._spawn(self.fine_job(grid=True))
+
+    async def _fine_datasets(self) -> list[tuple]:
+        datasets = []
+        liqs = {p["pool"]: p["liquidity_usd"] for p in await self.db.tracked_pools(min_candles=1)}
+        for pool in await self.db.fine_pools():
+            fine = await self.db.load_fine(pool)
+            if len(fine) < 500:
+                continue
+            hourly = await self.db.load_candles(pool)
+            datasets.append((pool, [tuple(c) for c in hourly], [tuple(c) for c in fine],
+                             float(liqs.get(pool) or 100_000)))
+        return datasets
+
+    async def fine_job(self, grid: bool = False) -> str | None:
+        from src.analysis.finetest import fine_grid, fine_models, format_fine_grid, format_fine_models
+        busy = "finegrid" if grid else "finetest"
         try:
-            datasets = []
-            liqs = {p["pool"]: p["liquidity_usd"] for p in await self.db.tracked_pools(min_candles=1)}
-            for pool in await self.db.fine_pools():
-                fine = await self.db.load_fine(pool)
-                if len(fine) < 500:
-                    continue
-                hourly = await self.db.load_candles(pool)
-                liq = float(liqs.get(pool) or 100_000)
-                datasets.append((pool, [tuple(c) for c in hourly], [tuple(c) for c in fine], liq))
+            datasets = await self._fine_datasets()
             params = await load_params(self.state, self.s)
             fee_usd = await self.state.tx_fee_usd(self.s)
+            fn, fmt = (fine_grid, format_fine_grid) if grid else (fine_models, format_fine_models)
             with ProcessPoolExecutor(max_workers=1) as ex:
                 res = await asyncio.get_running_loop().run_in_executor(
-                    ex, fine_models, datasets, asdict(params), self.s.MAX_POSITION_USD, fee_usd, bt_kwargs(self.s))
-            text_out = format_fine_models(res)
-            logger.info("FINETEST\n" + text_out)
+                    ex, fn, datasets, asdict(params), self.s.MAX_POSITION_USD, fee_usd, bt_kwargs(self.s))
+            text_out = fmt(res)
+            logger.info(busy.upper() + "\n" + text_out)
             await self.send(text_out)
             return text_out
         except Exception as e:
@@ -578,7 +595,7 @@ class TelegramController:
             await self.send(f"❌ فشل اختبار 5 دقائق: {escape(str(e))[:300]}")
             return None
         finally:
-            self._busy.discard("finetest")
+            self._busy.discard(busy)
 
     async def cmd_whatif(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Research only: back-test with / without the downtrend and lower-lows filters."""

@@ -52,8 +52,8 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   new high (shadow bt_blocked). Liquidity-collapse bans (72 h) stay.
 
 ## Workflow
-- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (105 passing as of
-  2026-11-27). Check for "FAILED" explicitly before committing.
+- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (106 passing as of
+  2026-11-28). Check for "FAILED" explicitly before committing.
 - Commit to feature/wave-scanner, push it and push it to main (Railway deploys main).
   After deploy, read Railway logs (startup, "strategy health", "shadow:" lines).
 - Telegram "Conflict: terminated by other getUpdates" right after a deploy is the old
@@ -93,6 +93,13 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   5-min intra 242, avg +3.05% (A +3.09 / B +3.01); 5-min close 221, avg +0.23%, median -1.9%
   (A -0.13 / B +0.65) -> NOT clearly positive; live-capturable edge ~0. Data still filling
   (62 of <=150 pools); re-run /finetest before the 11-30 review.
+  Live (2 s) sits between 5-min close and 5-min intra -> thin edge. Paper 27/11: paws and
+  Rings both hit TP1 (+2.77$, +3.51$).
+- 5-MIN PARAMETER SEARCH (approved 2026-11-28, research only): finetest.fine_grid, 324 combos
+  (bounce 1/2/3/5%, entry_drop 0.8/1.0/1.2, stop_drop 0.5/0.7/1.0, tp1 0.5/0.7/1.0, trail
+  0.3/0.4/0.6) on the 5-min close model, ranked by the worse half (>= 25 trades per half).
+  One-off finegrid_v1, /finegrid re-runs. Best combos on ~20 days are partly luck: adopt only
+  what stays good on later data, with Abdullah's approval, in BOTH backtest + live.
 
 ## State before 2026-11-27 (history)
 - Live trading OFF: the autopilot (/live auto, still enabled) switched it off on 2026-11-24

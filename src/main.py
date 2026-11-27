@@ -176,6 +176,9 @@ async def main():
                 if db.ready and not await state.get_meta("finetest_v1") and tg._guard("finetest"):
                     if await tg.fine_job():
                         await state.set_meta("finetest_v1", "done")
+                if db.ready and not await state.get_meta("finegrid_v1") and tg._guard("finegrid"):
+                    if await tg.fine_job(grid=True):
+                        await state.set_meta("finegrid_v1", "done")
             except Exception as e:
                 logger.exception(f"fine collection failed: {e}")
             await asyncio.sleep(3600)

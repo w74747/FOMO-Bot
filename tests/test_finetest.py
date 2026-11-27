@@ -46,3 +46,19 @@ def test_fine_models_and_format():
     assert res["rows"][3]["all"]["n"] > 0
     assert "5 دقائق" in format_fine_models(res)
     assert "لا توجد" in format_fine_models({"pools": 0, "days": 0, "rows": []})
+
+
+def test_fine_grid_ranks_and_formats():
+    from src.analysis.finetest import fine_grid, format_fine_grid
+    p = StrategyParams.from_settings(settings)
+    ds = []
+    for i, per in enumerate((26, 29, 32, 35)):
+        h, f = series(period=per)
+        ds.append((f"pool{i}", [tuple(c) for c in h], [tuple(c) for c in f[-12 * 24 * 10:]], 300_000))
+    grid = {"bounce": (0.01, 0.02), "entry_drop_factor": (1.0,), "stop_drop_factor": (0.7,),
+            "tp1_factor": (0.7, 1.0), "trail_factor": (0.4,)}
+    res = fine_grid(ds, asdict(p), 20, 0.02, {"bounce_pct": 0.02, "entry_slip": 0.007}, grid=grid, min_n=1)
+    assert res["combos"] == 4 and res["pools"] == 4
+    robust = [r["robust"] for r in res["top"]]
+    assert robust == sorted(robust, reverse=True)
+    assert "بحث الإعدادات" in format_fine_grid(res)
