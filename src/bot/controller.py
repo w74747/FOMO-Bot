@@ -607,6 +607,36 @@ class TelegramController:
         finally:
             self._busy.discard("whatif")
 
+    async def entry_mode_job(self) -> str | None:
+        """Research: entry inside the hour (current) vs at the hourly close (live == back-test)."""
+        from src.analysis.regime import entry_mode_models, format_gate_models
+        try:
+            pools = await self.db.tracked_pools(min_candles=300)
+            datasets = []
+            for p in pools:
+                cs = await self.db.load_candles(p["pool"])
+                datasets.append((p["pool"], [tuple(c) for c in cs], float(p["liquidity_usd"] or 100_000)))
+            params = await load_params(self.state, self.s)
+            fee_usd = await self.state.tx_fee_usd(self.s)
+            with ProcessPoolExecutor(max_workers=1) as ex:
+                rows = await asyncio.get_running_loop().run_in_executor(
+                    ex, entry_mode_models, datasets, asdict(params), self.s.MAX_POSITION_USD, fee_usd,
+                    bt_kwargs(self.s))
+            text_out = format_gate_models(
+                rows, f"🔬 <b>توقيت الدخول</b>: داخل الساعة أم عند إغلاقها؟ (الاختبار الواقعي، "
+                      f"{len(datasets)} مجمع مخزن، A/B حسب المجمع)")
+            text_out += ("\nℹ️ الدخول عند الإغلاق يمكن للبوت تطبيقه حرفياً من نفس الشمعة، "
+                         "فتتطابق صفقاته مع الاختبار.")
+            logger.info("ENTRYMODE\n" + text_out)
+            await self.send(text_out)
+            return text_out
+        except Exception as e:
+            logger.exception("entry mode research failed")
+            await self.send(f"❌ فشل التحليل: {escape(str(e))[:300]}")
+            return None
+        finally:
+            self._busy.discard("entrymode")
+
     async def cooldown_job(self) -> str | None:
         from src.analysis.regime import cooldown_models, format_cooldown_models
         try:

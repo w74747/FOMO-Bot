@@ -396,7 +396,8 @@ class Scanner:
         fee = await self.state.tx_fee_usd(self.s)
         with ProcessPoolExecutor(max_workers=1) as ex:
             res = await asyncio.get_running_loop().run_in_executor(
-                ex, shadow_states, datasets, asdict(self.params), self.s.MAX_POSITION_USD, fee, bt_kwargs(self.s))
+                ex, shadow_states, datasets, asdict(self.params), self.s.MAX_POSITION_USD, fee, bt_kwargs(self.s),
+                time.time())
         now = int(time.time())
         cur = await self.state.get_watchlist()           # re-read: the monitor may have changed items
         for mint, v in res.items():
@@ -404,6 +405,10 @@ class Scanner:
             if not it or it.get("status") == "holding":
                 continue
             it["shadow"] = {"ok": v["ok"], "why": v["why"], "ts": now}
+            if v.get("signal"):
+                it["bt_signal"] = v["signal"]        # ENTRY_ON_CLOSE: the back-test bought at this close
+            else:
+                it.pop("bt_signal", None)
             if v["ok"]:
                 moved = abs(v["entry"] - it.get("entry", 0)) / max(it.get("entry", 1e-12), 1e-12) > 0.001
                 for k in ("ref_high", "entry", "stop", "tp1", "tp2", "stop_pct", "time_stop_hours",

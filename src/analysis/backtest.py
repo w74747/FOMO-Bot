@@ -32,7 +32,10 @@ def bt_kwargs(settings) -> dict:
     """Back-test options matching live execution (empty = the old optimistic model)."""
     if not getattr(settings, "BT_REALISTIC", False):
         return {}
-    return {"bounce_pct": settings.BOUNCE_CONFIRM_PCT, "entry_slip": settings.BT_ENTRY_SLIP, "body_only": True}
+    kw = {"bounce_pct": settings.BOUNCE_CONFIRM_PCT, "entry_slip": settings.BT_ENTRY_SLIP, "body_only": True}
+    if getattr(settings, "ENTRY_ON_CLOSE", False):
+        kw["close_entry"] = True
+    return kw
 
 
 def _bounce_entry(bar, lv, bounce, slip, armed_low):
@@ -62,6 +65,26 @@ def _bounce_entry(bar, lv, bounce, slip, armed_low):
     return None, armed_low
 
 
+def _close_entry(bar, lv, bounce, slip, armed_low, max_above=1.05):
+    """Entry decided only at the hourly close, from the same candle live uses (ENTRY_ON_CLOSE).
+    Returns (fill, armed_low): fill is a price (buy now at the close + slip), "cancel" (a wick
+    broke the stop: the wave is broken), "missed" (closed too far above the entry zone) or
+    None (armed_low = lowest close since the zone was touched, None = not armed)."""
+    if armed_low is None:
+        if bar.c > lv["entry"]:
+            return None, None
+        if bar.l <= lv["stop"]:
+            return "cancel", None
+        return None, bar.c
+    if bar.l <= lv["stop"]:
+        return "cancel", None
+    if bar.c >= armed_low * (1 + bounce):
+        if bar.c > lv["entry"] * max_above:
+            return "missed", None
+        return bar.c * (1 + slip), None
+    return None, min(armed_low, bar.c)
+
+
 def backtest(
     candles: list[Candle],
     zz_pct: float,
@@ -81,6 +104,8 @@ def backtest(
     trail_only: float | None = None,
     cooldowns: dict | None = None,
     skip_gates: tuple[str, ...] = (),
+    close_entry: bool = False,
+    open_log: dict | None = None,
 ) -> BacktestResult:
     """`bounce_pct` (optional) models the live entry: after the price touches the entry level the
     bot waits for a bounce of `bounce_pct` off the lowest price since, then buys `entry_slip`
@@ -94,6 +119,10 @@ def backtest(
     `skip_gates` (research only): wave-score rejection reasons starting with these prefixes
     (e.g. "downtrend", "lower lows") are ignored, to measure what a filter costs or saves.
     Live never uses it; the default () is the live gate.
+
+    `close_entry` (with bounce_pct): the entry is decided only at each hourly close (see
+    _close_entry), exactly what live does with ENTRY_ON_CLOSE, so live == back-test by
+    construction. `open_log` receives the position still open at the end (entry_ts, fill...).
 
     `stats_cache` (optional) memoises wave stats per refit bar; it is only valid for one
     candle series and one zigzag pct, and lets the optimiser reuse work across parameter sets."""
@@ -178,6 +207,15 @@ def backtest(
                         continue
                     if body_only and bar.l < fb.l:
                         same_bar_low = bar.l         # the wick below came after the fill (against us)
+            elif close_entry:
+                if armed_low is None and (bar.c <= lv["stop"] or bar.c < ref_high * (1 - 2 * stats.median_drop)):
+                    continue      # closed below the stop / far below an old high: not a wave (live: stale_level)
+                fill, armed_low = _close_entry(bar, lv, bounce_pct, entry_slip, armed_low)
+                if fill == "cancel":
+                    blocked_until_new_high = True
+                    continue
+                if fill is None or fill == "missed":
+                    continue
             else:
                 was_armed = armed_low is not None
                 if not was_armed and (bar.o <= lv["stop"] or bar.o < ref_high * (1 - 2 * stats.median_drop)):
@@ -275,6 +313,10 @@ def backtest(
             ref_high = bar.h
             blocked_until_new_high = False
 
+    if open_log is not None and pos is not None:
+        open_log.update({"entry_ts": candles[pos["opened"]].ts, "fill": pos["entry"], "stop": pos["stop"],
+                         "tp1": pos["tp1"], "tp2": pos["tp2"], "lv_entry": pos["lv_entry"],
+                         "ref_high": pos["ref_high"], "half": pos["half"]})
     if not returns:
         return BacktestResult(0, 0, 0.0, 0.0, 0.0, 0.0, round((candles[-1].ts - candles[warmup].ts) / 86400, 1))
     wins = sum(1 for r in returns if r > 0)

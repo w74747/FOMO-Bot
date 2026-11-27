@@ -166,6 +166,12 @@ async def main():
             if await tg.whatif_job(""):
                 await state.set_meta("gate_v1", "done")
 
+    async def entry_mode_once():
+        await asyncio.sleep(240)
+        if db.ready and not await state.get_meta("entrymode_v1") and tg._guard("entrymode"):
+            if await tg.entry_mode_job():
+                await state.set_meta("entrymode_v1", "done")
+
     async def check_1127_once():
         """2026-11-27: since the no-rest change (deploy 2026-11-24 19:24 UTC), does paper take the
         back-test's trades? Reconcile + missed opportunities since then."""
@@ -260,9 +266,21 @@ async def main():
         while True:
             try:
                 await scanner.shadow_refresh()
+                if settings.ENTRY_ON_CLOSE:
+                    bought = await monitor.enter_signals()
+                    if bought:
+                        logger.info(f"close-entry signals bought: {bought}")
             except Exception as e:
                 logger.exception(f"shadow refresh failed: {e}")
-            await asyncio.sleep(settings.SHADOW_EVERY_MIN * 60)
+            if settings.ENTRY_ON_CLOSE:
+                # next run a few minutes after the next hourly close (the candle is final by then)
+                now = time.time()
+                nxt = (now // 3600) * 3600 + settings.ENTRY_CLOSE_DELAY_MIN * 60
+                if nxt <= now + 60:
+                    nxt += 3600
+                await asyncio.sleep(max(30, nxt - now))
+            else:
+                await asyncio.sleep(settings.SHADOW_EVERY_MIN * 60)
 
     async def autopilot_loop():
         await asyncio.sleep(60)
@@ -284,6 +302,7 @@ async def main():
         asyncio.create_task(gate_once(), name="gate-once"),
         asyncio.create_task(check_1127_once(), name="check-1127"),
         asyncio.create_task(paper_only_once(), name="paper-only-1127"),
+        asyncio.create_task(entry_mode_once(), name="entry-mode-once"),
         asyncio.create_task(reconcile_once(), name="reconcile-once"),
         asyncio.create_task(autopilot_loop(), name="autopilot"),
         asyncio.create_task(price_recorder(), name="price-recorder"),

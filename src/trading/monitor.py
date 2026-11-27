@@ -153,6 +153,15 @@ class Monitor:
             status = "waiting"
             item.update(status="waiting", local_min=None)
             changed = True
+        if getattr(self.s, "ENTRY_ON_CLOSE", False):
+            # entries come only from the hourly back-test signal (enter_signals), never from
+            # intra-hour Jupiter ticks, so live takes exactly the back-test's trades
+            if status == "armed":
+                item.update(status="waiting", local_min=None)
+                changed = True
+            if changed:
+                await self.state.set_watch_item(mint, item)
+            return
         shadow_ok = self._shadow_ok(item)
         if item.get("paper_only") and not getattr(self.s, "PAPER_ONLY_MIN_LIQUIDITY_USD", 0):
             shadow_ok = False             # low-liquidity experiment switched off: never enter
@@ -193,6 +202,56 @@ class Monitor:
                     return
         if changed:
             await self.state.set_watch_item(mint, item)
+
+    async def enter_signals(self) -> list[str]:
+        """ENTRY_ON_CLOSE: right after the hourly shadow refresh, buy every coin whose back-test
+        bought at the close of the last candle. Guards: the signal is fresh, the price has not
+        run more than ENTRY_CLOSE_MAX_GAP above the back-test's fill, and is above the stop."""
+        if not getattr(self.s, "ENTRY_ON_CLOSE", False):
+            return []
+        watch = await self.state.get_watchlist()
+        books = {name: await self.state.get_positions(name) for name in self.brokers}
+        held = set().union(*books.values()) if books else set()
+        todo = {}
+        now = time.time()
+        for mint, it in watch.items():
+            sig = it.get("bt_signal")
+            if not sig or mint in held or it.get("status") == "holding" or it.get("signal_done") == sig["ts"]:
+                continue
+            if now - (sig["ts"] + 3600) > self.s.ENTRY_CLOSE_MAX_AGE_MIN * 60 or not self._shadow_ok(it):
+                continue
+            if it.get("paper_only") and not getattr(self.s, "PAPER_ONLY_MIN_LIQUIDITY_USD", 0):
+                continue
+            todo[mint] = it
+        if not todo:
+            return []
+        prices = await self.jupiter.prices(list(todo))
+        done = []
+        for mint, it in todo.items():
+            it["signal_done"] = it["bt_signal"]["ts"]
+            info = prices.get(mint)
+            fill = it["bt_signal"]["fill"]
+            if not info or not info.get("price"):
+                logger.warning(f"signal {it.get('symbol')}: no Jupiter price")
+                await self.state.set_watch_item(mint, it)
+                continue
+            price, liq = info["price"], info.get("liquidity")
+            gap = price / fill - 1
+            if price <= it["stop"] or gap > self.s.ENTRY_CLOSE_MAX_GAP:
+                logger.info(f"signal {it.get('symbol')} skipped: price {price:.4g} vs back-test fill "
+                            f"{fill:.4g} ({gap:+.1%}), stop {it['stop']:.4g}")
+                await self.state.set_watch_item(mint, it)
+                continue
+            if self._liquidity_collapsed(f"w:{mint}", liq, it.get("liq_baseline")):
+                await self.state.set_watch_item(mint, it)
+                continue
+            it["local_min"] = fill                 # entry gap = live price vs the back-test's fill
+            await self.state.set_watch_item(mint, it)
+            logger.info(f"signal {it.get('symbol')}: back-test bought at {fill:.4g}, live {price:.4g} ({gap:+.2%})")
+            await self._enter(it, price, liq)
+            if it.get("status") == "holding":
+                done.append(it.get("symbol") or mint[:6])
+        return done
 
     def _shadow_ok(self, item: dict) -> bool:
         """Only trade what the back-test would trade right now (fresh shadow verdict required)."""

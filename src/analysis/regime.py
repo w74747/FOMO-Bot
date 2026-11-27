@@ -520,6 +520,40 @@ def coin_gate_models(candles: list[tuple], liq: float, params: dict, position_us
     return out
 
 
+ENTRY_MODE_MODELS = [
+    ("الحالي: دخول لحظي داخل الساعة (لا يمكن تطبيقه حرفياً)", {}),
+    ("عند إغلاق الساعة، ارتداد 2% (المقترح)", {"close_entry": True}),
+    ("عند إغلاق الساعة، ارتداد 1%", {"close_entry": True, "bounce_pct": 0.01}),
+    ("عند إغلاق الساعة، ارتداد 3%", {"close_entry": True, "bounce_pct": 0.03}),
+]
+
+
+def entry_mode_models(datasets: list[tuple], params: dict, position_usd: float, fee_usd: float,
+                      bt_kw: dict) -> list[dict]:
+    """Research 2026-11-27: the current realistic model enters inside the hour (candle bodies),
+    which live can only approximate from Jupiter ticks. The close model decides at each hourly
+    close from the same candle, which live can reproduce exactly. Same coins, A/B by pool hash."""
+    known = {f.name for f in fields(StrategyParams)}
+    p = StrategyParams(**{k: v for k, v in params.items() if k in known})
+    series = [(pool, clean_candles([Candle(*c) for c in cs]), liq) for pool, cs, liq in datasets]
+    series = [x for x in series if x[1]]
+    caches = {pool: {} for pool, _, _ in series}
+    base_kw = {k: v for k, v in (bt_kw or {}).items() if k != "close_entry"}
+    out = []
+    for name, over in ENTRY_MODE_MODELS:
+        kw = {**base_kw, **over}
+        per = {"A": [], "B": []}
+        coins = 0
+        for pool, cs, liq in series:
+            r = backtest(cs, p.zigzag_pct, p, liq, position_usd, tx_fee_usd=fee_usd, stats_cache=caches[pool], **kw)
+            per[split_of(pool)] += [x * 100 for x in r.returns]
+            coins += bool(r.trades)
+        rets = per["A"] + per["B"]
+        out.append({"name": name, "coins": coins, "all": _stats(rets), "a": _stats(per["A"]), "b": _stats(per["B"]),
+                    "median": statistics.median(rets) if rets else 0.0, "worst": min(rets) if rets else 0.0})
+    return out
+
+
 def format_gate_models(rows: list[dict], title: str) -> str:
     L = [title]
     for r in rows:

@@ -111,6 +111,14 @@ class Settings(BaseSettings):
     # polling delay, and count candle wicks only against us (they rarely show in Jupiter's price)
     BT_REALISTIC: bool = True
     BT_ENTRY_SLIP: float = 0.007
+    # Entries decided only at the hourly close from the same pool candle as the back-test
+    # (live == back-test by construction). The shadow refresh runs ENTRY_CLOSE_DELAY_MIN after
+    # each hour; a signal older than ENTRY_CLOSE_MAX_AGE_MIN or a price more than
+    # ENTRY_CLOSE_MAX_GAP above the back-test's fill is skipped.
+    ENTRY_ON_CLOSE: bool = False
+    ENTRY_CLOSE_DELAY_MIN: float = 3.0
+    ENTRY_CLOSE_MAX_AGE_MIN: float = 20.0
+    ENTRY_CLOSE_MAX_GAP: float = 0.03
     KNOWN_COINS_RECHECK: bool = True
     # strategy health: live entries only while the realistic back-test across ALL stored coins
     # averaged more than HEALTH_MIN_PCT per trade over the last HEALTH_WINDOW_DAYS (lagged so
