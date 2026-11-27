@@ -59,6 +59,7 @@ COMMANDS = [
     ("regime", "هل حالة السوق العامة تؤثر على نجاح الصفقات؟"),
     ("reconcile", "مطابقة صفقاتنا الفعلية مع الاختبار صفقة بصفقة"),
     ("whatif", "ماذا لو ألغينا فلتر الاتجاه؟ /whatif [عنوان] (تحليل فقط)"),
+    ("finetest", "اختبار الاستراتيجية على شموع 5 دقائق (تحليل فقط)"),
     ("params", "الإعدادات الحالية للاستراتيجية"),
     ("resetparams", "العودة للإعدادات الافتراضية"),
     ("wallet", "المحفظة الحقيقية والرصيد"),
@@ -124,7 +125,7 @@ class TelegramController:
             "scan": self.cmd_scan, "token": self.cmd_token, "pause": self.cmd_pause,
             "resume": self.cmd_resume, "closeall": self.cmd_closeall, "report": self.cmd_report,
             "collect": self.cmd_collect, "optimize": self.cmd_optimize, "apply": self.cmd_apply,
-            "regime": self.cmd_regime, "reconcile": self.cmd_reconcile, "whatif": self.cmd_whatif,
+            "regime": self.cmd_regime, "reconcile": self.cmd_reconcile, "whatif": self.cmd_whatif, "finetest": self.cmd_finetest,
             "params": self.cmd_params, "resetparams": self.cmd_resetparams,
             "watch": self.cmd_watch, "unwatch": self.cmd_unwatch, "mylist": self.cmd_mylist,
             "ban": self.cmd_ban, "unban": self.cmd_unban,
@@ -539,6 +540,45 @@ class TelegramController:
         except Exception:
             logger.exception("diagnose failed")
             return None
+
+    async def cmd_finetest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Research only: the strategy on 5-minute candles vs the hourly models."""
+        if not self.db.ready:
+            await self._reply(update, "قاعدة البيانات غير متصلة.")
+            return
+        if not self._guard("finetest"):
+            await self._reply(update, "⏳ اختبار 5 دقائق يعمل بالفعل.")
+            return
+        await self._reply(update, "⏳ أختبر الاستراتيجية على شموع 5 دقائق… (دقائق)")
+        self._spawn(self.fine_job())
+
+    async def fine_job(self) -> str | None:
+        from src.analysis.finetest import fine_models, format_fine_models
+        try:
+            datasets = []
+            liqs = {p["pool"]: p["liquidity_usd"] for p in await self.db.tracked_pools(min_candles=1)}
+            for pool in await self.db.fine_pools():
+                fine = await self.db.load_fine(pool)
+                if len(fine) < 500:
+                    continue
+                hourly = await self.db.load_candles(pool)
+                liq = float(liqs.get(pool) or 100_000)
+                datasets.append((pool, [tuple(c) for c in hourly], [tuple(c) for c in fine], liq))
+            params = await load_params(self.state, self.s)
+            fee_usd = await self.state.tx_fee_usd(self.s)
+            with ProcessPoolExecutor(max_workers=1) as ex:
+                res = await asyncio.get_running_loop().run_in_executor(
+                    ex, fine_models, datasets, asdict(params), self.s.MAX_POSITION_USD, fee_usd, bt_kwargs(self.s))
+            text_out = format_fine_models(res)
+            logger.info("FINETEST\n" + text_out)
+            await self.send(text_out)
+            return text_out
+        except Exception as e:
+            logger.exception("fine test failed")
+            await self.send(f"❌ فشل اختبار 5 دقائق: {escape(str(e))[:300]}")
+            return None
+        finally:
+            self._busy.discard("finetest")
 
     async def cmd_whatif(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Research only: back-test with / without the downtrend and lower-lows filters."""

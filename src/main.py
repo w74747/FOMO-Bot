@@ -166,6 +166,20 @@ async def main():
             if await tg.whatif_job(""):
                 await state.set_meta("gate_v1", "done")
 
+    async def fine_loop():
+        """5-minute candles for the fine back-test: backfill, then top up every hour. The first
+        complete backfill sends the 5-minute test once (finetest_v1)."""
+        await asyncio.sleep(300)
+        while settings.FINE_COLLECT:
+            try:
+                await scanner.collect_fine()
+                if db.ready and not await state.get_meta("finetest_v1") and tg._guard("finetest"):
+                    if await tg.fine_job():
+                        await state.set_meta("finetest_v1", "done")
+            except Exception as e:
+                logger.exception(f"fine collection failed: {e}")
+            await asyncio.sleep(3600)
+
     async def entry_mode_once():
         await asyncio.sleep(240)
         if db.ready and not await state.get_meta("entrymode_v1") and tg._guard("entrymode"):
@@ -303,6 +317,7 @@ async def main():
         asyncio.create_task(check_1127_once(), name="check-1127"),
         asyncio.create_task(paper_only_once(), name="paper-only-1127"),
         asyncio.create_task(entry_mode_once(), name="entry-mode-once"),
+        asyncio.create_task(fine_loop(), name="fine-candles"),
         asyncio.create_task(reconcile_once(), name="reconcile-once"),
         asyncio.create_task(autopilot_loop(), name="autopilot"),
         asyncio.create_task(price_recorder(), name="price-recorder"),

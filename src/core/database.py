@@ -67,6 +67,12 @@ CREATE INDEX IF NOT EXISTS idx_closed_time ON closed_positions (closed_at);
 ALTER TABLE closed_positions ADD COLUMN IF NOT EXISTS entry_gap_pct DOUBLE PRECISION;
 ALTER TABLE closed_positions ADD COLUMN IF NOT EXISTS exit_gap_pct DOUBLE PRECISION;
 ALTER TABLE closed_positions ADD COLUMN IF NOT EXISTS tier TEXT;
+CREATE TABLE IF NOT EXISTS candles_5m (
+    pool TEXT NOT NULL,
+    ts BIGINT NOT NULL,
+    o DOUBLE PRECISION, h DOUBLE PRECISION, l DOUBLE PRECISION, c DOUBLE PRECISION, v DOUBLE PRECISION,
+    PRIMARY KEY (pool, ts)
+);
 CREATE TABLE IF NOT EXISTS jup_prices (
     mint TEXT NOT NULL,
     ts BIGINT NOT NULL,
@@ -160,6 +166,52 @@ class Database:
         if not self.pool:
             return None
         return await self.pool.fetchval("SELECT MAX(ts) FROM candles WHERE pool=$1", pool)
+
+    # ------------------------------------------------------------ 5-minute candles (research)
+    async def save_fine(self, pool: str, candles) -> None:
+        if not self.pool or not candles:
+            return
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.executemany(
+                    "INSERT INTO candles_5m (pool, ts, o, h, l, c, v) VALUES ($1,$2,$3,$4,$5,$6,$7) "
+                    "ON CONFLICT (pool, ts) DO UPDATE SET o=EXCLUDED.o, h=EXCLUDED.h, l=EXCLUDED.l, "
+                    "c=EXCLUDED.c, v=EXCLUDED.v",
+                    [(pool, c.ts, c.o, c.h, c.l, c.c, c.v) for c in candles])
+        except Exception as e:
+            logger.error(f"save_fine failed: {e}")
+
+    async def load_fine(self, pool: str, since_ts: int = 0):
+        from src.data.models import Candle
+        if not self.pool:
+            return []
+        rows = await self.pool.fetch(
+            "SELECT ts, o, h, l, c, v FROM candles_5m WHERE pool=$1 AND ts >= $2 ORDER BY ts", pool, since_ts)
+        return [Candle(r["ts"], r["o"], r["h"], r["l"], r["c"], r["v"]) for r in rows]
+
+    async def fine_span(self, pool: str) -> tuple[int | None, int | None]:
+        if not self.pool:
+            return None, None
+        r = await self.pool.fetchrow("SELECT MIN(ts) AS a, MAX(ts) AS b FROM candles_5m WHERE pool=$1", pool)
+        return (r["a"], r["b"]) if r else (None, None)
+
+    async def fine_pools(self) -> list[str]:
+        if not self.pool:
+            return []
+        return [r["pool"] for r in await self.pool.fetch("SELECT DISTINCT pool FROM candles_5m")]
+
+    async def active_pools(self, within_hours: float = 48, min_candles: int = 300) -> list[dict]:
+        """Tracked pools whose hourly candles are recent (the coins the bot still looks at)."""
+        if not self.pool:
+            return []
+        import time as _t
+        rows = await self.pool.fetch(
+            "SELECT t.pool, t.mint, t.symbol, t.liquidity_usd, MAX(c.ts) AS last, COUNT(c.ts) AS n "
+            "FROM tracked_pools t JOIN candles c ON c.pool = t.pool "
+            "GROUP BY t.pool, t.mint, t.symbol, t.liquidity_usd "
+            "HAVING MAX(c.ts) >= $1 AND COUNT(c.ts) >= $2 ORDER BY MAX(c.ts) DESC",
+            int(_t.time() - within_hours * 3600), min_candles)
+        return [dict(r) for r in rows]
 
     async def tracked_pools(self, min_candles: int = 300) -> list[dict]:
         if not self.pool:

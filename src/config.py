@@ -116,6 +116,14 @@ class Settings(BaseSettings):
     # each hour; a signal older than ENTRY_CLOSE_MAX_AGE_MIN or a price more than
     # ENTRY_CLOSE_MAX_GAP above the back-test's fill is skipped.
     ENTRY_ON_CLOSE: bool = False
+    # 5-minute candles for the fine back-test (research): pools with hourly data in the last
+    # FINE_ACTIVE_HOURS, backfilled FINE_BACKFILL_PAGES x 1000 bars (~3.5 days each), then
+    # topped up every hour; one GeckoTerminal call every FINE_CALL_GAP_SEC (shared budget).
+    FINE_COLLECT: bool = True
+    FINE_ACTIVE_HOURS: float = 48.0
+    FINE_MAX_POOLS: int = 150
+    FINE_BACKFILL_PAGES: int = 4
+    FINE_CALL_GAP_SEC: float = 4.0
     ENTRY_CLOSE_DELAY_MIN: float = 3.0
     ENTRY_CLOSE_MAX_AGE_MIN: float = 20.0
     ENTRY_CLOSE_MAX_GAP: float = 0.03

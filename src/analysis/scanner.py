@@ -336,6 +336,43 @@ class Scanner:
         await self.db.save_candles(addr, pool.mint, pool.symbol, pool.liquidity_usd, fresh)
         return candles
 
+    async def collect_fine(self) -> tuple[int, int]:
+        """5-minute candles of the active pools (research). First time: page back
+        FINE_BACKFILL_PAGES x 1000 bars; afterwards only the missing recent bars.
+        Returns (pools touched, candles stored)."""
+        import asyncio
+        if not getattr(self.db, "ready", False):
+            return 0, 0
+        pools = (await self.db.active_pools(self.s.FINE_ACTIVE_HOURS))[: self.s.FINE_MAX_POOLS]
+        touched = stored = 0
+        now = time.time()
+        for p in pools:
+            addr = p["pool"]
+            try:
+                first, last = await self.db.fine_span(addr)
+                if last and now - last < 3 * 86400:
+                    need = int((now - last) / 300) + 3
+                    cs = await self.gecko.ohlcv(addr, "minute", 5, need)
+                    await self.db.save_fine(addr, cs)
+                    stored += len(cs)
+                    await asyncio.sleep(self.s.FINE_CALL_GAP_SEC)
+                else:
+                    before = None
+                    for _ in range(self.s.FINE_BACKFILL_PAGES):
+                        cs = await self.gecko.ohlcv(addr, "minute", 5, 1000, before=before)
+                        await self.db.save_fine(addr, cs)
+                        stored += len(cs)
+                        await asyncio.sleep(self.s.FINE_CALL_GAP_SEC)
+                        if len(cs) < 900:
+                            break
+                        before = cs[0].ts
+                touched += 1
+            except Exception as e:
+                logger.warning(f"fine candles {p.get('symbol')}: {e}")
+                await asyncio.sleep(self.s.FINE_CALL_GAP_SEC)
+        logger.info(f"fine candles: {touched} pools, {stored} candles stored")
+        return touched, stored
+
     async def collect(self, limit: int = 60) -> tuple[int, int]:
         """Backfill candle history for many tokens (winners AND losers) to give the optimiser
         a broad, less biased dataset. Returns (new_pools_stored, candles_stored)."""

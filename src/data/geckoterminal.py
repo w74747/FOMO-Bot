@@ -168,9 +168,10 @@ class GeckoClient:
                     out[mint] = max(pools, key=lambda p: p.liquidity_usd)
         return out
 
-    async def ohlcv(self, pool: str, timeframe: str = "hour", aggregate: int = 1, limit: int = 720) -> list[Candle]:
-        data = await self._get(
-            f"/networks/{NETWORK}/pools/{pool}/ohlcv/{timeframe}",
-            {"aggregate": aggregate, "limit": min(limit, 1000), "currency": "usd", "token": "base"},
-        )
+    async def ohlcv(self, pool: str, timeframe: str = "hour", aggregate: int = 1, limit: int = 720,
+                    before: int | None = None) -> list[Candle]:
+        q = {"aggregate": aggregate, "limit": min(limit, 1000), "currency": "usd", "token": "base"}
+        if before:
+            q["before_timestamp"] = int(before)
+        data = await self._get(f"/networks/{NETWORK}/pools/{pool}/ohlcv/{timeframe}", q)
         return parse_ohlcv(data)

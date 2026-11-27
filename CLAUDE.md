@@ -52,7 +52,7 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   new high (shadow bt_blocked). Liquidity-collapse bans (72 h) stay.
 
 ## Workflow
-- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (103 passing as of
+- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (105 passing as of
   2026-11-27). Check for "FAILED" explicitly before committing.
 - Commit to feature/wave-scanner, push it and push it to main (Railway deploys main).
   After deploy, read Railway logs (startup, "strategy health", "shadow:" lines).
@@ -79,6 +79,15 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   gate result was measured on the same optimistic model. Proposed next: back-test entries/exits
   on 5-minute candles (stats from hourly) + jup_prices to measure the edge live can capture,
   before any return to live.
+- 5-MINUTE TEST (approved by Abdullah 2026-11-27, research only): src/analysis/finetest.py
+  backtest_fine (brain on hourly: stats/score/levels/refit 24 h; entries + exits on 5-min
+  candles; modes "close" = decide at each 5-min close, no lookahead, and "intra" = current
+  bounce model inside the 5-min bar). fine_models compares hourly intra / hourly close / 5-min
+  intra / 5-min close on the same period per pool, A/B. Data: table candles_5m, filled by
+  fine_loop (Scanner.collect_fine: active pools <= 150, backfill 4 x 1000 bars, hourly top-up,
+  one Gecko call / 4 s). First full backfill sends the result once (finetest_v1); /finetest
+  re-runs it. Abdullah: wait a few days, then judge the paper trades + this test together
+  (review 2026-11-30). Live return only if "5-min close" is clearly positive on A and B.
 
 ## State before 2026-11-27 (history)
 - Live trading OFF: the autopilot (/live auto, still enabled) switched it off on 2026-11-24
