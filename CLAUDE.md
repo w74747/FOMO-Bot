@@ -100,6 +100,12 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   0.3/0.4/0.6) on the 5-min close model, ranked by the worse half (>= 25 trades per half).
   One-off finegrid_v1, /finegrid re-runs. Best combos on ~20 days are partly luck: adopt only
   what stays good on later data, with Abdullah's approval, in BOTH backtest + live.
+  RESULT finegrid_v1 (2026-11-27 20:42 UTC, 63 pools): current settings 225 trades +0.27%
+  (A -0.27 / B +0.90); only 2 of 324 combos positive in both halves, best bounce 3% + trail
+  x0.6: +0.43% (A +0.47 / B +0.39), i.e. no parameter set gives a real edge. Conclusion: the
+  edge is not in the parameters; the entry idea itself is ~breakeven under honest execution.
+  Nothing changed. Live stays off; next steps (new entry signal, wallet tracking, or more data)
+  are Abdullah's call.
 
 ## State before 2026-11-27 (history)
 - Live trading OFF: the autopilot (/live auto, still enabled) switched it off on 2026-11-24
