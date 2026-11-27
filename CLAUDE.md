@@ -88,6 +88,11 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   one Gecko call / 4 s). First full backfill sends the result once (finetest_v1); /finetest
   re-runs it. Abdullah: wait a few days, then judge the paper trades + this test together
   (review 2026-11-30). Live return only if "5-min close" is clearly positive on A and B.
+  FIRST RESULT finetest_v1 (2026-11-27 12:44 UTC, 61 pools, ~19.8 days each): hourly intra 166
+  trades avg +5.53% (A +3.73 / B +7.65); hourly close 116, avg -0.48% (A -1.34 / B +0.87);
+  5-min intra 242, avg +3.05% (A +3.09 / B +3.01); 5-min close 221, avg +0.23%, median -1.9%
+  (A -0.13 / B +0.65) -> NOT clearly positive; live-capturable edge ~0. Data still filling
+  (62 of <=150 pools); re-run /finetest before the 11-30 review.
 
 ## State before 2026-11-27 (history)
 - Live trading OFF: the autopilot (/live auto, still enabled) switched it off on 2026-11-24
