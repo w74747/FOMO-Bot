@@ -52,7 +52,7 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   new high (shadow bt_blocked). Liquidity-collapse bans (72 h) stay.
 
 ## Workflow
-- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (96 passing as of
+- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (103 passing as of
   2026-11-27). Check for "FAILED" explicitly before committing.
 - Commit to feature/wave-scanner, push it and push it to main (Railway deploys main).
   After deploy, read Railway logs (startup, "strategy health", "shadow:" lines).
@@ -68,6 +68,17 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   switch baseline (auto_since).
 - Lower-lows gate REMOVED 2026-11-27 from score() in waves.py (no rejection; it still lowers the
   score). Downtrend gate kept. Entry desync (Jupiter price vs pool candles) is still open.
+
+- ENTRY-MODE FINDING 2026-11-27 (entrymode_v1, 258 pools): the same strategy entered at the
+  hourly CLOSE (ENTRY_ON_CLOSE, which live can reproduce exactly) loses: 511 trades, avg -2.53%,
+  median -6.0%, A -675% / B -618% (bounce 1% and 3% also negative), vs the current intra-hour
+  model +6.22% avg (A +2336 / B +2301). The current model only buys bounces that held until the
+  candle close (lookahead), live at 2 s cannot know that -> its edge is likely overstated, which
+  fits the real results (live ~-5%/trade, paper negative after the first 10). ENTRY_ON_CLOSE stays
+  False (code kept: backtest close_entry, shadow signal, Monitor.enter_signals). The lower-lows
+  gate result was measured on the same optimistic model. Proposed next: back-test entries/exits
+  on 5-minute candles (stats from hourly) + jup_prices to measure the edge live can capture,
+  before any return to live.
 
 ## State before 2026-11-27 (history)
 - Live trading OFF: the autopilot (/live auto, still enabled) switched it off on 2026-11-24
