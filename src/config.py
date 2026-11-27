@@ -119,6 +119,14 @@ class Settings(BaseSettings):
     # 5-minute candles for the fine back-test (research): pools with hourly data in the last
     # FINE_ACTIVE_HOURS, backfilled FINE_BACKFILL_PAGES x 1000 bars (~3.5 days each), then
     # topped up every hour; one GeckoTerminal call every FINE_CALL_GAP_SEC (shared budget).
+    # Order flow / holders / smart wallets (research 2026-11-28, no effect on trading)
+    FLOW_COLLECT: bool = True
+    FLOW_EVERY_MIN: float = 5.0
+    FLOW_MAX_POOLS: int = 20          # watchlist + held first, then the most liquid active pools
+    HOLDERS_EVERY_MIN: float = 15.0
+    BIRDEYE_SMART: bool = True        # top traders of our coins (needs BIRDEYE_API_KEY)
+    BIRDEYE_DAILY_COINS: int = 25     # free plan: 30k CU / month
+    BIRDEYE_SECURITY: bool = False    # keep the free CU budget for top traders
     FINE_COLLECT: bool = True
     FINE_ACTIVE_HOURS: float = 48.0
     FINE_MAX_POOLS: int = 150

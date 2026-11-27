@@ -61,6 +61,8 @@ COMMANDS = [
     ("whatif", "ماذا لو ألغينا فلتر الاتجاه؟ /whatif [عنوان] (تحليل فقط)"),
     ("finetest", "اختبار الاستراتيجية على شموع 5 دقائق (تحليل فقط)"),
     ("finegrid", "بحث أفضل الإعدادات على شموع 5 دقائق (تحليل فقط)"),
+    ("flow", "ضغط الشراء والبيع والمحافظ الذكية لعملات المراقبة (تحليل فقط)"),
+    ("wallets", "المحافظ الذكية المكتشفة من Birdeye"),
     ("params", "الإعدادات الحالية للاستراتيجية"),
     ("resetparams", "العودة للإعدادات الافتراضية"),
     ("wallet", "المحفظة الحقيقية والرصيد"),
@@ -126,7 +128,8 @@ class TelegramController:
             "scan": self.cmd_scan, "token": self.cmd_token, "pause": self.cmd_pause,
             "resume": self.cmd_resume, "closeall": self.cmd_closeall, "report": self.cmd_report,
             "collect": self.cmd_collect, "optimize": self.cmd_optimize, "apply": self.cmd_apply,
-            "regime": self.cmd_regime, "reconcile": self.cmd_reconcile, "whatif": self.cmd_whatif, "finetest": self.cmd_finetest, "finegrid": self.cmd_finegrid,
+            "regime": self.cmd_regime, "reconcile": self.cmd_reconcile, "whatif": self.cmd_whatif, "finetest": self.cmd_finetest, "finegrid": self.cmd_finegrid, "flow": self.cmd_flow,
+            "wallets": self.cmd_wallets,
             "params": self.cmd_params, "resetparams": self.cmd_resetparams,
             "watch": self.cmd_watch, "unwatch": self.cmd_unwatch, "mylist": self.cmd_mylist,
             "ban": self.cmd_ban, "unban": self.cmd_unban,
@@ -552,6 +555,21 @@ class TelegramController:
             return
         await self._reply(update, "⏳ أختبر الاستراتيجية على شموع 5 دقائق… (دقائق)")
         self._spawn(self.fine_job())
+
+    async def cmd_flow(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        flow = getattr(self, "flow", None)
+        if not flow or not self.db.ready:
+            await self._reply(update, "جمع البيانات غير متاح الآن.")
+            return
+        await self._reply(update, await flow.flow_report())
+
+    async def cmd_wallets(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        flow = getattr(self, "flow", None)
+        if not flow or not self.db.ready:
+            await self._reply(update, "جمع البيانات غير متاح الآن.")
+            return
+        from src.analysis.flow import format_wallets
+        await self._reply(update, format_wallets(await self.db.smart_wallets(), flow.birdeye_note()))
 
     async def cmd_finegrid(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.db.ready:

@@ -73,6 +73,35 @@ CREATE TABLE IF NOT EXISTS candles_5m (
     o DOUBLE PRECISION, h DOUBLE PRECISION, l DOUBLE PRECISION, c DOUBLE PRECISION, v DOUBLE PRECISION,
     PRIMARY KEY (pool, ts)
 );
+CREATE TABLE IF NOT EXISTS pool_trades (
+    pool TEXT NOT NULL,
+    tx TEXT NOT NULL,
+    ts BIGINT NOT NULL,
+    kind TEXT NOT NULL,
+    usd DOUBLE PRECISION,
+    trader TEXT,
+    price DOUBLE PRECISION,
+    PRIMARY KEY (pool, tx, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_pool_trades_ts ON pool_trades (pool, ts);
+CREATE TABLE IF NOT EXISTS holders (
+    mint TEXT NOT NULL,
+    ts BIGINT NOT NULL,
+    holders INTEGER,
+    PRIMARY KEY (mint, ts)
+);
+CREATE TABLE IF NOT EXISTS smart_wallets (
+    wallet TEXT NOT NULL,
+    mint TEXT NOT NULL,
+    symbol TEXT,
+    ts BIGINT NOT NULL,
+    pnl DOUBLE PRECISION,
+    realized DOUBLE PRECISION,
+    volume DOUBLE PRECISION,
+    trades INTEGER,
+    tags TEXT,
+    PRIMARY KEY (wallet, mint)
+);
 CREATE TABLE IF NOT EXISTS jup_prices (
     mint TEXT NOT NULL,
     ts BIGINT NOT NULL,
@@ -211,6 +240,84 @@ class Database:
             "GROUP BY t.pool, t.mint, t.symbol, t.liquidity_usd "
             "HAVING MAX(c.ts) >= $1 AND COUNT(c.ts) >= $2 ORDER BY MAX(c.ts) DESC",
             int(_t.time() - within_hours * 3600), min_candles)
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------ order flow / holders / wallets
+    async def save_trades(self, pool: str, trades: list[dict]) -> int:
+        if not self.pool or not trades:
+            return 0
+        try:
+            async with self.pool.acquire() as conn:
+                before = await conn.fetchval("SELECT COUNT(*) FROM pool_trades WHERE pool=$1", pool)
+                await conn.executemany(
+                    "INSERT INTO pool_trades (pool, tx, ts, kind, usd, trader, price) VALUES ($1,$2,$3,$4,$5,$6,$7) "
+                    "ON CONFLICT DO NOTHING",
+                    [(pool, t["tx"], t["ts"], t["kind"], t["usd"], t["trader"], t["price"]) for t in trades])
+                after = await conn.fetchval("SELECT COUNT(*) FROM pool_trades WHERE pool=$1", pool)
+                return int(after - before)
+        except Exception as e:
+            logger.error(f"save_trades failed: {e}")
+            return 0
+
+    async def last_trade_ts(self, pool: str) -> int | None:
+        if not self.pool:
+            return None
+        return await self.pool.fetchval("SELECT MAX(ts) FROM pool_trades WHERE pool=$1", pool)
+
+    async def load_trades(self, pool: str, since_ts: int = 0) -> list[dict]:
+        if not self.pool:
+            return []
+        rows = await self.pool.fetch("SELECT ts, kind, usd, trader, price FROM pool_trades "
+                                     "WHERE pool=$1 AND ts >= $2 ORDER BY ts", pool, since_ts)
+        return [dict(r) for r in rows]
+
+    async def save_holders(self, ts: int, counts: dict[str, int]) -> None:
+        if not self.pool or not counts:
+            return
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.executemany("INSERT INTO holders (mint, ts, holders) VALUES ($1,$2,$3) "
+                                       "ON CONFLICT DO NOTHING", [(m, ts, int(n)) for m, n in counts.items() if n])
+        except Exception as e:
+            logger.error(f"save_holders failed: {e}")
+
+    async def holders_series(self, mint: str, since_ts: int = 0) -> list[tuple[int, int]]:
+        if not self.pool:
+            return []
+        rows = await self.pool.fetch("SELECT ts, holders FROM holders WHERE mint=$1 AND ts >= $2 ORDER BY ts",
+                                     mint, since_ts)
+        return [(r["ts"], r["holders"]) for r in rows]
+
+    async def save_smart(self, mint: str, symbol: str, ts: int, traders: list[dict]) -> None:
+        if not self.pool or not traders:
+            return
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.executemany(
+                    "INSERT INTO smart_wallets (wallet, mint, symbol, ts, pnl, realized, volume, trades, tags) "
+                    "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (wallet, mint) DO UPDATE SET ts=EXCLUDED.ts, "
+                    "pnl=EXCLUDED.pnl, realized=EXCLUDED.realized, volume=EXCLUDED.volume, trades=EXCLUDED.trades, "
+                    "tags=EXCLUDED.tags",
+                    [(t["wallet"], mint, symbol, ts, t["pnl"], t["realized"], t["volume"], t["trades"],
+                      ",".join(t["tags"])) for t in traders])
+        except Exception as e:
+            logger.error(f"save_smart failed: {e}")
+
+    async def smart_checked(self, since_ts: int) -> set[str]:
+        if not self.pool:
+            return set()
+        return {r["mint"] for r in await self.pool.fetch(
+            "SELECT DISTINCT mint FROM smart_wallets WHERE ts >= $1", since_ts)}
+
+    async def smart_wallets(self, min_coins: int = 1) -> list[dict]:
+        """Wallets with positive PnL in our coins, bots excluded, best first."""
+        if not self.pool:
+            return []
+        rows = await self.pool.fetch(
+            "SELECT wallet, COUNT(*) AS coins, SUM(pnl) AS pnl, SUM(volume) AS volume, "
+            "string_agg(symbol, ',') AS symbols FROM smart_wallets "
+            "WHERE pnl > 0 AND tags NOT ILIKE '%bot%' AND tags NOT ILIKE '%sniper%' AND tags NOT ILIKE '%arbitrage%' "
+            "GROUP BY wallet HAVING COUNT(*) >= $1 ORDER BY COUNT(*) DESC, SUM(pnl) DESC", min_coins)
         return [dict(r) for r in rows]
 
     async def tracked_pools(self, min_candles: int = 300) -> list[dict]:

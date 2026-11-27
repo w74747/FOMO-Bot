@@ -101,6 +101,26 @@ def parse_ohlcv(payload: dict) -> list[Candle]:
     return candles
 
 
+def parse_trades(payload: dict) -> list[dict]:
+    """Pool trades (newest first from the API) -> [{tx, ts, kind, usd, trader, price}]."""
+    from datetime import datetime
+    out = []
+    for row in (payload or {}).get("data") or []:
+        a = (row or {}).get("attributes") or {}
+        try:
+            ts = int(datetime.fromisoformat(str(a.get("block_timestamp")).replace("Z", "+00:00")).timestamp())
+        except (TypeError, ValueError):
+            continue
+        kind = a.get("kind")
+        if kind not in ("buy", "sell") or not a.get("tx_hash"):
+            continue
+        price = a.get("price_to_in_usd") if kind == "buy" else a.get("price_from_in_usd")
+        out.append({"tx": a["tx_hash"], "ts": ts, "kind": kind, "usd": _f(a.get("volume_in_usd")),
+                    "trader": a.get("tx_from_address") or "", "price": _f(price)})
+    out.sort(key=lambda t: t["ts"])
+    return out
+
+
 class GeckoClient:
     def __init__(self, http: Http, calls_per_min: int = 20, demo_key: str | None = None):
         self.http = http
@@ -127,6 +147,11 @@ class GeckoClient:
         data = await self._get(f"/networks/{NETWORK}/trending_pools",
                                {"page": page, "include": "base_token,quote_token"})
         return parse_pools(data)
+
+    async def trades(self, pool: str) -> list[dict]:
+        """Last <= 300 trades of a pool (past 24 h)."""
+        data = await self._get(f"/networks/{NETWORK}/pools/{pool}/trades")
+        return parse_trades(data)
 
     async def token_pools(self, mint: str) -> list[PoolInfo]:
         data = await self._get(

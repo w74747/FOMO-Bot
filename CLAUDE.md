@@ -52,7 +52,7 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   new high (shadow bt_blocked). Liquidity-collapse bans (72 h) stay.
 
 ## Workflow
-- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (106 passing as of
+- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (111 passing as of
   2026-11-28). Check for "FAILED" explicitly before committing.
 - Commit to feature/wave-scanner, push it and push it to main (Railway deploys main).
   After deploy, read Railway logs (startup, "strategy health", "shadow:" lines).
@@ -106,6 +106,19 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   edge is not in the parameters; the entry idea itself is ~breakeven under honest execution.
   Nothing changed. Live stays off; next steps (new entry signal, wallet tracking, or more data)
   are Abdullah's call.
+
+- FLOW / HOLDERS / SMART WALLETS (approved by Abdullah 2026-11-28, research only, no effect on
+  trading): src/analysis/flow.py FlowCollector. flow_loop: GeckoTerminal pool trades (<= 300
+  latest, table pool_trades) for watchlist + held + most liquid active pools (<= 20) every 5
+  min; Jupiter holderCount (table holders) every 15 min. smart_loop: once a day Birdeye
+  top_traders (30 d, total_pnl) of <= 25 of our coins -> table smart_wallets (bots excluded in
+  db.smart_wallets). src/data/birdeye.py; needs BIRDEYE_API_KEY on Railway (free Standard plan
+  30k CU/month, 1 rps; top_traders may need Starter 99$/month: on 401/403 it stops and
+  /wallets says so). BIRDEYE_SECURITY=False keeps the free budget off token_security.
+  Commands /flow, /wallets. Abdullah prefers Birdeye over hand-picked FOMO wallets. Plan:
+  after ~1 week test flow-gated entries (net buying / smart buys before the bounce) on the
+  honest 5-min-close model, A/B, before any use. Watch GeckoTerminal 429s (CoinGecko Demo
+  plan is listed as 10k calls/month; no 429 from it seen so far).
 
 ## State before 2026-11-27 (history)
 - Live trading OFF: the autopilot (/live auto, still enabled) switched it off on 2026-11-24

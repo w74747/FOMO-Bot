@@ -85,7 +85,11 @@ async def main():
     tg = TelegramController(settings.TELEGRAM_BOT_TOKEN, settings.ALLOWED_ADMIN_CHAT_ID, settings)
     gecko = GeckoClient(http, settings.GECKO_CALLS_PER_MIN, settings.COINGECKO_DEMO_API_KEY)
     jupiter = JupiterClient(http, settings.JUPITER_API_KEY, settings.JUPITER_RPM, settings.JUPITER_SCAN_RESERVE)
-    safety = SafetyChecker(http, settings.SOLANA_RPC_URL, settings.BIRDEYE_API_KEY)
+    from src.analysis.flow import FlowCollector
+    from src.data.birdeye import BirdeyeClient
+    birdeye = BirdeyeClient(http, settings.BIRDEYE_API_KEY if settings.BIRDEYE_SMART else None)
+    safety = SafetyChecker(http, settings.SOLANA_RPC_URL,
+                           settings.BIRDEYE_API_KEY if settings.BIRDEYE_SECURITY else None)
     broker = PaperBroker(state, db, settings)
     live = None
     if settings.WALLET_PRIVATE_KEY and settings.SOLANA_RPC_URL and settings.JUPITER_API_KEY:
@@ -165,6 +169,37 @@ async def main():
         if db.ready and not await state.get_meta("gate_v1") and tg._guard("whatif"):
             if await tg.whatif_job(""):
                 await state.set_meta("gate_v1", "done")
+
+    flow = FlowCollector(db, gecko, jupiter, birdeye, state, settings)
+    tg.flow = flow
+
+    async def flow_loop():
+        """Research data: pool trades every FLOW_EVERY_MIN, holders every HOLDERS_EVERY_MIN."""
+        await asyncio.sleep(120)
+        last_holders = 0.0
+        while settings.FLOW_COLLECT:
+            t0 = time.time()
+            try:
+                if db.ready:
+                    n, new = await flow.collect_trades()
+                    if time.time() - last_holders >= settings.HOLDERS_EVERY_MIN * 60:
+                        h = await flow.collect_holders()
+                        last_holders = time.time()
+                        logger.info(f"flow: {n} pools, {new} new trades, holders {h} coins, gaps {flow.gaps}")
+            except Exception as e:
+                logger.warning(f"flow collection failed: {e}")
+            await asyncio.sleep(max(30, settings.FLOW_EVERY_MIN * 60 - (time.time() - t0)))
+
+    async def smart_loop():
+        """Once a day: Birdeye top traders of our coins (smart wallets)."""
+        await asyncio.sleep(600)
+        while True:
+            try:
+                if db.ready and birdeye.key:
+                    await flow.smart_daily()
+            except Exception as e:
+                logger.warning(f"smart wallets failed: {e}")
+            await asyncio.sleep(86400)
 
     async def fine_loop():
         """5-minute candles for the fine back-test: backfill, then top up every hour. The first
@@ -321,6 +356,8 @@ async def main():
         asyncio.create_task(paper_only_once(), name="paper-only-1127"),
         asyncio.create_task(entry_mode_once(), name="entry-mode-once"),
         asyncio.create_task(fine_loop(), name="fine-candles"),
+        asyncio.create_task(flow_loop(), name="flow"),
+        asyncio.create_task(smart_loop(), name="smart-wallets"),
         asyncio.create_task(reconcile_once(), name="reconcile-once"),
         asyncio.create_task(autopilot_loop(), name="autopilot"),
         asyncio.create_task(price_recorder(), name="price-recorder"),
