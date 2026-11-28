@@ -129,7 +129,10 @@ class FlowCollector:
             held = await self.state.held_mints()
             pools = [p for p in pools if p["mint"] in watch or p["mint"] in held][:8]
         new = 0
+        keyless_at_start = getattr(self.gecko, "fallback", False)
         for p in pools:
+            if getattr(self.gecko, "fallback", False) and not keyless_at_start:
+                break                              # switched to keyless during this round
             try:
                 last = await self.db.last_trade_ts(p["pool"])
                 tr = await self.gecko.trades(p["pool"])

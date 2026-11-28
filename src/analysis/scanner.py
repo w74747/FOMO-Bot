@@ -347,6 +347,8 @@ class Scanner:
         touched = stored = 0
         now = time.time()
         for p in pools:
+            if getattr(self.gecko, "fallback", False):
+                break                              # demo quota used up: candles/shadow first
             addr = p["pool"]
             try:
                 first, last = await self.db.fine_span(addr)
