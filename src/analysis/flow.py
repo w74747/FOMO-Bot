@@ -122,6 +122,12 @@ class FlowCollector:
 
     async def collect_trades(self) -> tuple[int, int]:
         pools = await self.targets()
+        if getattr(self.gecko, "fallback", False):
+            # keyless GeckoTerminal (demo quota used up): candles/shadow come first, so only
+            # the watchlist and held coins, at most 8
+            watch = await self.state.get_watchlist()
+            held = await self.state.held_mints()
+            pools = [p for p in pools if p["mint"] in watch or p["mint"] in held][:8]
         new = 0
         for p in pools:
             try:

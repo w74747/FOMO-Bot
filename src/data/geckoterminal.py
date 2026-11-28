@@ -125,11 +125,13 @@ def parse_trades(payload: dict) -> list[dict]:
 
 class GeckoClient:
     KEYLESS_BASE = "https://api.geckoterminal.com/api/v2"
-    KEYLESS_PER_MIN = 20  # public API allows ~30/min
+    KEYLESS_PER_MIN = 15  # public API allows ~30/min, but it is shared and 20/min still drew many 429s
 
     def __init__(self, http: Http, calls_per_min: int = 20, demo_key: str | None = None):
         self.http = http
         self.fallback = False  # True once the demo key's monthly cap is hit
+        self._fallback_month = None
+        self._keyed = None
         if demo_key:
             self.base = "https://api.coingecko.com/api/v3/onchain"
             self.headers = {"accept": "application/json", "x-cg-demo-api-key": demo_key}
@@ -138,18 +140,33 @@ class GeckoClient:
             self.base = self.KEYLESS_BASE
             self.headers = {"accept": "application/json"}
         self.limiter = RateLimiter(calls_per_min)
+        if demo_key:
+            self._keyed = (self.base, self.headers, self.limiter)
+
+    def _month(self) -> str:
+        import time as _t
+        return _t.strftime("%Y-%m", _t.gmtime())
+
+    def _maybe_restore(self):
+        """The demo quota resets on the 1st of each month (UTC): go back to the key then."""
+        if self.fallback and self._keyed and self._fallback_month != self._month():
+            self.base, self.headers, self.limiter = self._keyed
+            self.fallback = False
+            logger.info("gecko: new month -> back to the CoinGecko demo key")
 
     def _use_keyless(self):
         if self.base == self.KEYLESS_BASE:
             return
         logger.warning("gecko: CoinGecko demo key monthly limit reached -> keyless GeckoTerminal API "
-                       f"({self.KEYLESS_PER_MIN}/min) until restart")
+                       f"({self.KEYLESS_PER_MIN}/min) until the 1st of next month")
         self.base = self.KEYLESS_BASE
         self.headers = {"accept": "application/json"}
         self.limiter = RateLimiter(self.KEYLESS_PER_MIN)
         self.fallback = True
+        self._fallback_month = self._month()
 
     async def _get(self, path: str, params: dict | None = None) -> dict:
+        self._maybe_restore()
         try:
             return await self.http.get_json(self.base + path, params=params, headers=self.headers,
                                             limiter=self.limiter)

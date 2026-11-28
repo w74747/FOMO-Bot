@@ -52,7 +52,7 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   new high (shadow bt_blocked). Liquidity-collapse bans (72 h) stay.
 
 ## Workflow
-- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (111 passing as of
+- Tests: `python -m pytest -q` and `python -m pyflakes src tests` (116 passing as of
   2026-11-28). Check for "FAILED" explicitly before committing.
 - Commit to feature/wave-scanner, push it and push it to main (Railway deploys main).
   After deploy, read Railway logs (startup, "strategy health", "shadow:" lines).
@@ -125,6 +125,11 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   GeckoClient switches to the keyless api.geckoterminal.com (20/min) until restart; keyless gives
   some 429s at that rate but shadow/candles keep working. Demo quota should reset 2026-12-01.
   Open for Abdullah: slow flow/fine loops until then, or a paid CoinGecko plan.
+  2026-11-28 follow-up: keyless still drew constant 429s (core candles/shadow competing with
+  research loops) -> while gecko.fallback: KEYLESS_PER_MIN 15, flow trades only watchlist +
+  held (<= 8) every 15 min, 5-min candle top-up paused; GeckoClient returns to the demo key by
+  itself in a new UTC month (no restart needed). From December the research loops use the
+  10k/month quota again and will run out again: budget them (or a paid plan) before Dec 1.
 
 ## State before 2026-11-27 (history)
 - Live trading OFF: the autopilot (/live auto, still enabled) switched it off on 2026-11-24

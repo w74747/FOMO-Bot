@@ -188,7 +188,8 @@ async def main():
                         logger.info(f"flow: {n} pools, {new} new trades, holders {h} coins, gaps {flow.gaps}")
             except Exception as e:
                 logger.warning(f"flow collection failed: {e}")
-            await asyncio.sleep(max(30, settings.FLOW_EVERY_MIN * 60 - (time.time() - t0)))
+            every = settings.FLOW_EVERY_MIN * (3 if gecko.fallback else 1)   # keyless: every 15 min
+            await asyncio.sleep(max(30, every * 60 - (time.time() - t0)))
 
     async def smart_loop():
         """Once a day: Birdeye top traders of our coins (smart wallets)."""
@@ -207,6 +208,12 @@ async def main():
         await asyncio.sleep(300)
         while settings.FINE_COLLECT:
             try:
+                if gecko.fallback:
+                    # keyless GeckoTerminal: skip the 5-minute top-up (~60 calls/h) until the demo
+                    # quota resets on the 1st; the gap is refilled then (<= 1000 bars per pool)
+                    logger.info("fine candles: paused while on the keyless GeckoTerminal API")
+                    await asyncio.sleep(3600)
+                    continue
                 await scanner.collect_fine()
                 if db.ready and not await state.get_meta("finetest_v1") and tg._guard("finetest"):
                     if await tg.fine_job():
