@@ -130,6 +130,9 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   held (<= 8) every 15 min, 5-min candle top-up paused; GeckoClient returns to the demo key by
   itself in a new UTC month (no restart needed). From December the research loops use the
   10k/month quota again and will run out again: budget them (or a paid plan) before Dec 1.
+  2026-11-28 14:25 (6249dbc): scans had not finished since 07:41 UTC: on keyless, best_pools made one
+  call per token after a failed (429) multi call, each retried 30-180 s. Now no per-token calls on
+  keyless or after a failed multi call. Keyless still 429s almost every call from Railway's IP.
 
 ## State before 2026-11-27 (history)
 - Live trading OFF: the autopilot (/live auto, still enabled) switched it off on 2026-11-24
