@@ -4,7 +4,9 @@ Free keyless API, rate-limited. If COINGECKO_DEMO_API_KEY is set the CoinGecko
 on-chain endpoints are used instead (same data, higher limit)."""
 from datetime import datetime, timezone
 
-from src.data.http import Http, RateLimiter
+from loguru import logger
+
+from src.data.http import Http, HttpError, RateLimiter, quota_exhausted
 from src.data.models import Candle, PoolInfo
 
 NETWORK = "solana"
@@ -122,19 +124,41 @@ def parse_trades(payload: dict) -> list[dict]:
 
 
 class GeckoClient:
+    KEYLESS_BASE = "https://api.geckoterminal.com/api/v2"
+    KEYLESS_PER_MIN = 20  # public API allows ~30/min
+
     def __init__(self, http: Http, calls_per_min: int = 20, demo_key: str | None = None):
         self.http = http
+        self.fallback = False  # True once the demo key's monthly cap is hit
         if demo_key:
             self.base = "https://api.coingecko.com/api/v3/onchain"
             self.headers = {"accept": "application/json", "x-cg-demo-api-key": demo_key}
             calls_per_min = max(calls_per_min, 60)
         else:
-            self.base = "https://api.geckoterminal.com/api/v2"
+            self.base = self.KEYLESS_BASE
             self.headers = {"accept": "application/json"}
         self.limiter = RateLimiter(calls_per_min)
 
+    def _use_keyless(self):
+        if self.base == self.KEYLESS_BASE:
+            return
+        logger.warning("gecko: CoinGecko demo key monthly limit reached -> keyless GeckoTerminal API "
+                       f"({self.KEYLESS_PER_MIN}/min) until restart")
+        self.base = self.KEYLESS_BASE
+        self.headers = {"accept": "application/json"}
+        self.limiter = RateLimiter(self.KEYLESS_PER_MIN)
+        self.fallback = True
+
     async def _get(self, path: str, params: dict | None = None) -> dict:
-        return await self.http.get_json(self.base + path, params=params, headers=self.headers, limiter=self.limiter)
+        try:
+            return await self.http.get_json(self.base + path, params=params, headers=self.headers,
+                                            limiter=self.limiter)
+        except HttpError as e:
+            if self.base == self.KEYLESS_BASE or not quota_exhausted(e.status, e.body):
+                raise
+            self._use_keyless()
+            return await self.http.get_json(self.base + path, params=params, headers=self.headers,
+                                            limiter=self.limiter)
 
     async def top_pools(self, page: int = 1) -> list[PoolInfo]:
         data = await self._get(

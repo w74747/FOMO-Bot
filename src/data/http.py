@@ -20,6 +20,12 @@ class HttpError(Exception):
     def __init__(self, status: int, url: str, body: str = ""):
         super().__init__(redact(f"HTTP {status} for {url}: {body[:200]}"))
         self.status = status
+        self.body = body or ""
+
+
+def quota_exhausted(status: int, body: str) -> bool:
+    """CoinGecko monthly credit cap (error_code 10006): retrying cannot help."""
+    return status == 429 and ("10006" in (body or "") or "calls limit" in (body or ""))
 
 
 class RateLimiter:
@@ -129,6 +135,8 @@ class Http:
                     if resp.status == 200:
                         return await resp.json(content_type=None)
                     body = await resp.text()
+                    if quota_exhausted(resp.status, body):
+                        raise HttpError(resp.status, url, body)  # monthly cap: no retry
                     if resp.status == 429 or resp.status >= 500:
                         retry_after = resp.headers.get("Retry-After")
                         hinted = float(retry_after) if retry_after and retry_after.isdigit() else 0.0
