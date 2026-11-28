@@ -77,3 +77,41 @@ async def test_flow_only_watchlist_when_keyless(monkeypatch):
     fc = FlowCollector(_DB(), g, None, None, state, settings)
     n, _ = await fc.collect_trades()
     assert n == 1
+
+
+class CountingHttp:
+    """multi call fails (429) or returns nothing; counts single-token calls."""
+    def __init__(self, multi_fails: bool):
+        self.multi_fails = multi_fails
+        self.single = 0
+
+    async def get_json(self, url, **kw):
+        if "/tokens/multi/" in url:
+            if self.multi_fails:
+                raise HttpError(429, url, "rate limited")
+            return {"data": [], "included": []}
+        if "/tokens/" in url and url.endswith("/pools"):
+            self.single += 1
+        return {"data": [], "included": []}
+
+
+def test_best_pools_no_per_token_storm_after_failed_multi():
+    http = CountingHttp(multi_fails=True)
+    g = GeckoClient(http, 8, None)
+    assert asyncio.run(g.best_pools([f"M{i}" for i in range(30)])) == {}
+    assert http.single == 0
+
+
+def test_best_pools_no_per_token_calls_on_keyless():
+    http = CountingHttp(multi_fails=False)
+    g = GeckoClient(http, 8, "demo-key")
+    g._use_keyless()
+    asyncio.run(g.best_pools(["A", "B", "C"]))
+    assert http.single == 0
+
+
+def test_best_pools_per_token_on_keyed_api():
+    http = CountingHttp(multi_fails=False)
+    g = GeckoClient(http, 8, "demo-key")
+    asyncio.run(g.best_pools(["A", "B"]))
+    assert http.single == 2

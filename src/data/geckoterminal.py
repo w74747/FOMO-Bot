@@ -217,15 +217,20 @@ class GeckoClient:
         out: dict[str, PoolInfo] = {}
         for i in range(0, len(mints), 30):
             chunk = mints[i:i + 30]
+            multi_ok = True
             try:
                 data = await self._get(f"/networks/{NETWORK}/tokens/multi/{','.join(chunk)}",
                                        {"include": "top_pools"})
                 found = parse_multi_top_pools(data)
             except Exception:
-                found = {}
+                found, multi_ok = {}, False
+            # One call per token only on the keyed API and when the multi call worked: on the
+            # keyless API (or after a failed multi call, usually a 429) 30 single calls with
+            # 30-180 s retries each stalled the scan for hours (2026-11-28).
+            per_token = multi_ok and not self.fallback
             for mint in chunk:
                 pools = [p for p in found.get(mint, []) if p.quote_symbol in QUOTE_SYMBOLS]
-                if not pools:  # fallback: one call per token
+                if not pools and per_token:  # fallback: one call per token
                     try:
                         pools = [p for p in await self.token_pools(mint) if p.quote_symbol in QUOTE_SYMBOLS]
                     except Exception:
