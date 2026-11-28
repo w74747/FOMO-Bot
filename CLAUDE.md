@@ -120,6 +120,12 @@ Always reply to him in Arabic unless he writes in English. Telegram texts are Ar
   honest 5-min-close model, A/B, before any use. Watch GeckoTerminal 429s (CoinGecko Demo
   plan is listed as 10k calls/month; no 429 from it seen so far).
 
+- GECKO QUOTA 2026-11-28 08:45 UTC: the CoinGecko Demo key hit its 10,000-call MONTHLY cap
+  (error 10006; flow_loop trades + fine_loop used it up). Fix 3fc1a57: a 10006 429 is not retried and
+  GeckoClient switches to the keyless api.geckoterminal.com (20/min) until restart; keyless gives
+  some 429s at that rate but shadow/candles keep working. Demo quota should reset 2026-12-01.
+  Open for Abdullah: slow flow/fine loops until then, or a paid CoinGecko plan.
+
 ## State before 2026-11-27 (history)
 - Live trading OFF: the autopilot (/live auto, still enabled) switched it off on 2026-11-24
   (last 8 paper trades averaged -2.18%). It restarts by itself only when health > +2%, the
